@@ -9,7 +9,10 @@
           "refresh_token": "Refresh Token",
           "identity_id": "Identity ID",
           "mqtt_endpoint": "MQTT Endpoint",
-          "mqtt_port": "MQTT Port"
+          "mqtt_port": "MQTT Port",
+          "api_base_url": "API Base URL",
+          "jwt_token": "JWT Token (optional)",
+          "tenant_id": "Tenant ID (optional)"
         }
       }
     },

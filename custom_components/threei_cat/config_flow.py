@@ -11,11 +11,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
+    CONF_API_BASE_URL,
     CONF_IDENTITY_ID,
     CONF_IOT_TOKEN,
+    CONF_JWT_TOKEN,
     CONF_MQTT_ENDPOINT,
     CONF_MQTT_PORT,
     CONF_REFRESH_TOKEN,
+    CONF_TENANT_ID,
+    DEFAULT_API_BASE_URL,
     DEFAULT_MQTT_ENDPOINT,
     DEFAULT_MQTT_PORT,
     DOMAIN,
@@ -34,6 +38,11 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_MQTT_PORT, default=DEFAULT_MQTT_PORT
         ): int,
+        vol.Optional(
+            CONF_API_BASE_URL, default=DEFAULT_API_BASE_URL
+        ): str,
+        vol.Optional(CONF_JWT_TOKEN, default=""): str,
+        vol.Optional(CONF_TENANT_ID, default=""): str,
     }
 )
 

@@ -7,10 +7,14 @@ import logging
 import time
 from typing import Any, Callable
 
+import aiohttp
 import paho.mqtt.client as mqtt
 
 from .const import (
+    API_CLEAN_RECORDS_URL,
+    API_CONSUMABLES_URL,
     API_REFRESH_TOKEN_URL,
+    DEFAULT_API_BASE_URL,
     DEFAULT_MQTT_ENDPOINT,
     DEFAULT_MQTT_PORT,
     KEEPALIVE,
@@ -34,6 +38,9 @@ class AliIoTClient:
         identity_id: str,
         iot_token: str,
         refresh_token: str,
+        api_base_url: str = DEFAULT_API_BASE_URL,
+        jwt_token: str = "",
+        tenant_id: str = "",
         mqtt_endpoint: str = DEFAULT_MQTT_ENDPOINT,
         mqtt_port: int = DEFAULT_MQTT_PORT,
         on_message: Callable[[str, dict], None] | None = None,
@@ -43,6 +50,9 @@ class AliIoTClient:
         self._identity_id = identity_id
         self._iot_token = iot_token
         self._refresh_token = refresh_token
+        self._api_base_url = api_base_url
+        self._jwt_token = jwt_token
+        self._tenant_id = tenant_id
         self._mqtt_endpoint = mqtt_endpoint
         self._mqtt_port = mqtt_port
         self._on_message = on_message
@@ -183,8 +193,6 @@ class AliIoTClient:
 
     async def refresh_token(self) -> bool:
         """Refresh the IoT token."""
-        import aiohttp
-
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -253,3 +261,94 @@ class AliIoTClient:
         if refresh_token:
             self._refresh_token = refresh_token
         self._token_acquired_at = time.time()
+
+    def update_auth(self, jwt_token: str = "", tenant_id: str = "") -> None:
+        """Update REST API auth tokens."""
+        if jwt_token:
+            self._jwt_token = jwt_token
+        if tenant_id:
+            self._tenant_id = tenant_id
+
+    def _build_rest_cookies(self) -> dict[str, str]:
+        """Build cookie dict for REST API calls."""
+        cookies = {"iotToken": self._iot_token}
+        if self._jwt_token:
+            cookies["token"] = self._jwt_token
+        return cookies
+
+    def _build_rest_headers(self) -> dict[str, str]:
+        """Build headers for REST API calls."""
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if self._tenant_id:
+            headers["tenant_id"] = self._tenant_id
+        return headers
+
+    async def get_consumables(self) -> dict | None:
+        """Fetch consumable information from the cloud API.
+
+        Returns dict of consumable data or None on failure.
+        """
+        url = API_CONSUMABLES_URL.format(base_url=self._api_base_url)
+        cookies = self._build_rest_cookies()
+        headers = self._build_rest_headers()
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json={},
+                    headers=headers,
+                    cookies=cookies,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status != 200:
+                        _LOGGER.warning(
+                            "Consumables API returned status %d", resp.status
+                        )
+                        return None
+                    data = await resp.json()
+                    _LOGGER.debug("Consumables API response: %s", data)
+                    # Response may be wrapped in {code, data, message}
+                    if isinstance(data, dict):
+                        return data.get("data", data)
+                    return data
+        except Exception:
+            _LOGGER.exception("Failed to fetch consumables data")
+            return None
+
+    async def get_clean_records(
+        self, page: int = 1, page_size: int = 20
+    ) -> list | None:
+        """Fetch cleaning history records from the cloud API.
+
+        Returns list of clean records or None on failure.
+        """
+        url = API_CLEAN_RECORDS_URL.format(base_url=self._api_base_url)
+        cookies = self._build_rest_cookies()
+        headers = self._build_rest_headers()
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json={"page": page, "pageSize": page_size},
+                    headers=headers,
+                    cookies=cookies,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status != 200:
+                        _LOGGER.warning(
+                            "Clean records API returned status %d", resp.status
+                        )
+                        return None
+                    data = await resp.json()
+                    _LOGGER.debug("Clean records API response: %s", data)
+                    if isinstance(data, dict):
+                        return data.get("data", data)
+                    return data
+        except Exception:
+            _LOGGER.exception("Failed to fetch clean records")
+            return None

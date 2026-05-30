@@ -13,7 +13,7 @@ from .coordinator import ThreeiDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SELECT]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SELECT, Platform.SWITCH, Platform.CAMERA]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

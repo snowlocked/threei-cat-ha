@@ -11,19 +11,17 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
-    PROPERTY_AUTO_CLEAN,
-    PROPERTY_CHILD_LOCK,
-    PROPERTY_DEVICE_LIGHT,
-    PROPERTY_AUTO_POWER_OFF,
+    PROP_AUTO_CLEAN,
+    PROP_CHILD_LOCK,
+    PROP_DEVICE_LIGHT,
 )
 from .coordinator import ThreeiDataUpdateCoordinator
 
 
 SWITCH_CONFIGS: list[tuple[str, str, str]] = [
-    (PROPERTY_AUTO_CLEAN, "Auto Clean", "mdi:robot-vacuum"),
-    (PROPERTY_CHILD_LOCK, "Child Lock", "mdi:lock"),
-    (PROPERTY_DEVICE_LIGHT, "Device Light", "mdi:lightbulb"),
-    (PROPERTY_AUTO_POWER_OFF, "Auto Power Off", "mdi:power"),
+    (PROP_AUTO_CLEAN, "Auto Clean", "mdi:robot-vacuum"),
+    (PROP_CHILD_LOCK, "Child Lock", "mdi:lock"),
+    (PROP_DEVICE_LIGHT, "Device Light", "mdi:lightbulb"),
 ]
 
 
@@ -63,7 +61,7 @@ class ThreeiSwitchEntity(CoordinatorEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return true if the switch is on."""
-        value = self.coordinator.device_data.get(self._key)
+        value = self.coordinator.device_state.get(self._key)
         if value is None:
             return None
         if isinstance(value, bool):
@@ -76,22 +74,13 @@ class ThreeiSwitchEntity(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
-        await self.hass.async_add_executor_job(
-            self.coordinator.set_property, self._key, True
-        )
+        self.coordinator._client.publish_property_set({self._key: True})
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        await self.hass.async_add_executor_job(
-            self.coordinator.set_property, self._key, False
-        )
+        self.coordinator._client.publish_property_set({self._key: False})
 
     @property
     def device_info(self) -> dict[str, Any]:
         """Return device information."""
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
-            "name": "3i Cat Litter Box",
-            "manufacturer": "3irobotix",
-            "model": "Smart Cat Litter Box",
-        }
+        return self.coordinator.device_info

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -11,11 +12,15 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .ali_iot_client import AliIoTClient
 from .const import (
+    CONF_API_BASE_URL,
     CONF_IDENTITY_ID,
     CONF_IOT_TOKEN,
+    CONF_JWT_TOKEN,
     CONF_MQTT_ENDPOINT,
     CONF_MQTT_PORT,
     CONF_REFRESH_TOKEN,
+    CONF_TENANT_ID,
+    DEFAULT_API_BASE_URL,
     DEFAULT_MQTT_ENDPOINT,
     DEFAULT_MQTT_PORT,
     DEVICE_MANUFACTURER,
@@ -60,6 +65,8 @@ class ThreeiDataUpdateCoordinator(DataUpdateCoordinator):
         self._client: AliIoTClient | None = None
         self._token_refresh_task: asyncio.Task | None = None
         self.device_state: dict = {}
+        self.consumables_data: dict = {}
+        self.clean_records: list = []
 
         # Device info
         self.identity_id: str = entry.data[CONF_IDENTITY_ID]
@@ -116,6 +123,25 @@ class ThreeiDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from the device."""
         if self._client and self._client.connected:
             self._client.publish_property_get()
+
+        # Fetch consumables data (every other update to avoid rate limits)
+        if self._client and self.last_update_success is not None:
+            try:
+                consumables = await self._client.get_consumables()
+                if consumables is not None:
+                    self.consumables_data = consumables
+                    _LOGGER.debug("Updated consumables data")
+            except Exception:
+                _LOGGER.debug("Could not fetch consumables", exc_info=True)
+
+            try:
+                records = await self._client.get_clean_records()
+                if records is not None:
+                    self.clean_records = records if isinstance(records, list) else []
+                    _LOGGER.debug("Updated clean records: %d entries", len(self.clean_records))
+            except Exception:
+                _LOGGER.debug("Could not fetch clean records", exc_info=True)
+
         return self.device_state
 
     async def async_config_entry_first_refresh(self) -> None:
@@ -124,11 +150,17 @@ class ThreeiDataUpdateCoordinator(DataUpdateCoordinator):
             CONF_MQTT_ENDPOINT, DEFAULT_MQTT_ENDPOINT
         )
         mqtt_port = self.entry.data.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT)
+        api_base_url = self.entry.data.get(CONF_API_BASE_URL, DEFAULT_API_BASE_URL)
+        jwt_token = self.entry.data.get(CONF_JWT_TOKEN, "")
+        tenant_id = self.entry.data.get(CONF_TENANT_ID, "")
 
         self._client = AliIoTClient(
             identity_id=self.entry.data[CONF_IDENTITY_ID],
             iot_token=self.entry.data[CONF_IOT_TOKEN],
             refresh_token=self.entry.data[CONF_REFRESH_TOKEN],
+            api_base_url=api_base_url,
+            jwt_token=jwt_token,
+            tenant_id=tenant_id,
             mqtt_endpoint=mqtt_endpoint,
             mqtt_port=int(mqtt_port),
             on_message=self._on_message,
@@ -200,6 +232,19 @@ class ThreeiDataUpdateCoordinator(DataUpdateCoordinator):
         """Set suction level."""
         if self._client:
             self._client.publish_property_set({"suction_level": level})
+
+    def set_device_property(self, key: str, value: Any) -> None:
+        """Set a device property via MQTT."""
+        if self._client:
+            self._client.publish_property_set({key: value})
+
+    def reset_consumable(self, consumable_type: str) -> None:
+        """Reset a consumable counter via MQTT service call."""
+        if self._client:
+            self._client.publish_property_set({
+                "service": "reset_consumable",
+                "consumableType": consumable_type,
+            })
 
     @property
     def device_info(self) -> dict:

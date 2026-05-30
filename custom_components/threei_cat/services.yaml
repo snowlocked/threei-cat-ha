@@ -83,3 +83,25 @@ set_suction_level:
             - "1"
             - "2"
             - "3"
+
+reset_consumable:
+  name: Reset Consumable
+  description: Reset a consumable life counter (e.g., after replacing a brush or filter)
+  target:
+    entity:
+      integration: threei_cat
+  fields:
+    consumable_type:
+      name: Consumable Type
+      description: The consumable to reset
+      required: true
+      selector:
+        select:
+          options:
+            - "consumable_sideBrush"
+            - "consumable_mainBrush"
+            - "consumable_filter"
+            - "consumable_mop"
+            - "consumable_catSand"
+            - "consumable_shitBox"
+            - "consumable_material"
