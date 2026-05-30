@@ -13,11 +13,15 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .ali_iot_client import AliIoTClient
 from .const import (
     CONF_API_BASE_URL,
+    CONF_DEVICE_ID,
     CONF_IDENTITY_ID,
     CONF_IOT_TOKEN,
     CONF_JWT_TOKEN,
     CONF_MQTT_ENDPOINT,
     CONF_MQTT_PORT,
+    CONF_OPEN_ACCOUNT_TOKEN,
+    CONF_PHONE,
+    CONF_PHONE_REGION,
     CONF_REFRESH_TOKEN,
     CONF_TENANT_ID,
     DEFAULT_API_BASE_URL,
@@ -26,22 +30,16 @@ from .const import (
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DOMAIN,
-    PROP_AUTO_CLEAN,
     PROP_BATTERY,
     PROP_BIN_FULL,
     PROP_BIN_FULL_ALT,
     PROP_CHARGING,
-    PROP_CHILD_LOCK,
-    PROP_CLEAN_FINISH,
     PROP_CLEAN_STATUS,
-    PROP_DEVICE_LIGHT,
     PROP_FIRMWARE_CODE,
     PROP_MCU_VERSION,
     PROP_SUCTION_LEVEL,
     PROP_WATER_LEVEL,
     PROP_WORK_MODE,
-    REFRESH_MARGIN,
-    REFRESH_TOKEN_LIFETIME,
     TOPIC_DOWN_PROPERTIES,
 )
 
@@ -70,7 +68,11 @@ class ThreeiDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Device info
         self.identity_id: str = entry.data[CONF_IDENTITY_ID]
-        self.device_id: str = entry.data[CONF_IDENTITY_ID]
+        self.device_id: str = entry.data.get(CONF_DEVICE_ID, entry.data[CONF_IDENTITY_ID])
+
+        # Phone login info for re-auth
+        self._phone: str = entry.data.get(CONF_PHONE, "")
+        self._phone_region: str = entry.data.get(CONF_PHONE_REGION, "86")
 
     @callback
     def _on_message(self, topic: str, payload: dict) -> None:
@@ -151,7 +153,12 @@ class ThreeiDataUpdateCoordinator(DataUpdateCoordinator):
         )
         mqtt_port = self.entry.data.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT)
         api_base_url = self.entry.data.get(CONF_API_BASE_URL, DEFAULT_API_BASE_URL)
+
+        # Get JWT token - prefer explicit jwt_token, fall back to open_account_token
         jwt_token = self.entry.data.get(CONF_JWT_TOKEN, "")
+        if not jwt_token:
+            jwt_token = self.entry.data.get(CONF_OPEN_ACCOUNT_TOKEN, "")
+
         tenant_id = self.entry.data.get(CONF_TENANT_ID, "")
 
         self._client = AliIoTClient(

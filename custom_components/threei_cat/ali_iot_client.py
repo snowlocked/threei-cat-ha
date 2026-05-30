@@ -61,7 +61,6 @@ class AliIoTClient:
         self._connected = False
         self._token_acquired_at = time.time()
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._refresh_task: asyncio.Task | None = None
 
     @property
     def connected(self) -> bool:
@@ -107,9 +106,7 @@ class AliIoTClient:
         """Handle disconnection."""
         self._connected = False
         if rc != 0:
-            _LOGGER.warning("MQTT disconnected unexpectedly (rc=%d), will reconnect", rc)
-        else:
-            _LOGGER.info("MQTT disconnected")
+            _LOGGER.warning("MQTT disconnected (rc=%d), will reconnect", rc)
 
     def _on_mqtt_message(
         self,
@@ -120,7 +117,7 @@ class AliIoTClient:
         """Handle incoming MQTT message."""
         try:
             payload = json.loads(msg.payload.decode())
-            _LOGGER.debug("Received message on %s: %s", msg.topic, payload)
+            _LOGGER.debug("Received on %s: %s", msg.topic, payload)
             if self._on_message:
                 if self._loop and self._loop.is_running():
                     self._loop.call_soon_threadsafe(
@@ -151,9 +148,6 @@ class AliIoTClient:
 
     async def async_disconnect(self) -> None:
         """Disconnect from MQTT broker."""
-        if self._refresh_task:
-            self._refresh_task.cancel()
-            self._refresh_task = None
         if self._client:
             self._client.loop_stop()
             self._client.disconnect()
@@ -199,37 +193,28 @@ class AliIoTClient:
                     API_REFRESH_TOKEN_URL,
                     json={"refreshToken": self._refresh_token},
                     headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        _LOGGER.error(
-                            "Token refresh failed with status %d", resp.status
-                        )
+                        _LOGGER.error("Token refresh failed: %d", resp.status)
                         return False
                     data = await resp.json()
-                    new_iot_token = data.get("iotToken") or data.get("data", {}).get(
-                        "iotToken"
-                    )
-                    new_refresh_token = data.get(
-                        "refreshToken"
-                    ) or data.get("data", {}).get("refreshToken")
+                    new_iot_token = data.get("data", {}).get("iotToken")
+                    new_refresh_token = data.get("data", {}).get("refreshToken")
                     if not new_iot_token:
-                        _LOGGER.error("No iotToken in refresh response: %s", data)
+                        _LOGGER.error("No iotToken in refresh response")
                         return False
-                    old_token = self._iot_token
                     self._iot_token = new_iot_token
                     if new_refresh_token:
                         self._refresh_token = new_refresh_token
                     self._token_acquired_at = time.time()
-                    _LOGGER.info("IoT token refreshed successfully")
+                    _LOGGER.info("IoT token refreshed")
                     if self._on_token_refresh:
-                        self._on_token_refresh(
-                            self._iot_token, self._refresh_token
-                        )
-                    # Reconnect with new token
+                        self._on_token_refresh(self._iot_token, self._refresh_token)
                     await self._reconnect_with_new_token()
                     return True
         except Exception:
-            _LOGGER.exception("Exception during token refresh")
+            _LOGGER.exception("Token refresh failed")
             return False
 
     async def _reconnect_with_new_token(self) -> None:
@@ -245,9 +230,9 @@ class AliIoTClient:
                 self._mqtt_endpoint, self._mqtt_port, keepalive=KEEPALIVE
             )
             self._client.loop_start()
-            _LOGGER.info("Reconnected MQTT with refreshed token")
+            _LOGGER.info("Reconnected MQTT with new token")
         except Exception:
-            _LOGGER.exception("Failed to reconnect with new token")
+            _LOGGER.exception("Failed to reconnect")
 
     def get_seconds_until_refresh(self) -> float:
         """Get seconds until token needs refresh."""
@@ -255,25 +240,13 @@ class AliIoTClient:
         remaining = REFRESH_TOKEN_LIFETIME - elapsed - REFRESH_MARGIN
         return max(0, remaining)
 
-    def update_iot_token(self, iot_token: str, refresh_token: str | None = None) -> None:
-        """Update tokens (e.g., from config entry update)."""
-        self._iot_token = iot_token
-        if refresh_token:
-            self._refresh_token = refresh_token
-        self._token_acquired_at = time.time()
-
-    def update_auth(self, jwt_token: str = "", tenant_id: str = "") -> None:
-        """Update REST API auth tokens."""
-        if jwt_token:
-            self._jwt_token = jwt_token
-        if tenant_id:
-            self._tenant_id = tenant_id
-
     def _build_rest_cookies(self) -> dict[str, str]:
-        """Build cookie dict for REST API calls."""
+        """Build cookie dict for REST API calls to 3irobotix servers."""
         cookies = {"iotToken": self._iot_token}
         if self._jwt_token:
-            cookies["token"] = self._jwt_token
+            cookies["auth"] = self._jwt_token
+        cookies["country"] = "15"
+        cookies["language"] = "en"
         return cookies
 
     def _build_rest_headers(self) -> dict[str, str]:
@@ -287,11 +260,8 @@ class AliIoTClient:
         return headers
 
     async def get_consumables(self) -> dict | None:
-        """Fetch consumable information from the cloud API.
-
-        Returns dict of consumable data or None on failure.
-        """
-        url = API_CONSUMABLES_URL.format(base_url=self._api_base_url)
+        """Fetch consumable information from the cloud API."""
+        url = f"https://{self._api_base_url}/outer/app/productInfo/getConsumablesByProductIds"
         cookies = self._build_rest_cookies()
         headers = self._build_rest_headers()
 
@@ -305,28 +275,22 @@ class AliIoTClient:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        _LOGGER.warning(
-                            "Consumables API returned status %d", resp.status
-                        )
+                        _LOGGER.warning("Consumables API returned %d", resp.status)
+                        text = await resp.text()
+                        _LOGGER.debug("Response: %s", text[:500])
                         return None
                     data = await resp.json()
-                    _LOGGER.debug("Consumables API response: %s", data)
-                    # Response may be wrapped in {code, data, message}
-                    if isinstance(data, dict):
-                        return data.get("data", data)
-                    return data
+                    _LOGGER.debug("Consumables: %s", data)
+                    return data.get("data", data)
         except Exception:
-            _LOGGER.exception("Failed to fetch consumables data")
+            _LOGGER.exception("Failed to fetch consumables")
             return None
 
     async def get_clean_records(
         self, page: int = 1, page_size: int = 20
     ) -> list | None:
-        """Fetch cleaning history records from the cloud API.
-
-        Returns list of clean records or None on failure.
-        """
-        url = API_CLEAN_RECORDS_URL.format(base_url=self._api_base_url)
+        """Fetch cleaning history records."""
+        url = f"https://{self._api_base_url}/device-shadow-service/app/data/flow/clean-record-timeline"
         cookies = self._build_rest_cookies()
         headers = self._build_rest_headers()
 
@@ -340,15 +304,14 @@ class AliIoTClient:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        _LOGGER.warning(
-                            "Clean records API returned status %d", resp.status
-                        )
+                        _LOGGER.warning("Clean records API returned %d", resp.status)
                         return None
                     data = await resp.json()
-                    _LOGGER.debug("Clean records API response: %s", data)
-                    if isinstance(data, dict):
-                        return data.get("data", data)
-                    return data
+                    _LOGGER.debug("Clean records: %s", data)
+                    result = data.get("data", data)
+                    if isinstance(result, dict):
+                        return result.get("list", result.get("records", []))
+                    return result if isinstance(result, list) else []
         except Exception:
             _LOGGER.exception("Failed to fetch clean records")
             return None

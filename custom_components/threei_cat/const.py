@@ -2,6 +2,9 @@
 
 DOMAIN = "threei_cat"
 
+# Known tenant_id for 3irobotix
+DEFAULT_TENANT_ID = "1528911334443982848"
+
 # Cloud REST API defaults
 DEFAULT_API_BASE_URL = "cn-csh5-aiot.3irobotix.net"
 CONF_API_BASE_URL = "api_base_url"
@@ -32,6 +35,12 @@ CONF_REFRESH_TOKEN = "refresh_token"
 CONF_IDENTITY_ID = "identity_id"
 CONF_MQTT_ENDPOINT = "mqtt_endpoint"
 CONF_MQTT_PORT = "mqtt_port"
+CONF_PHONE = "phone"
+CONF_PHONE_REGION = "phone_region"
+CONF_VERIFY_CODE = "verify_code"
+CONF_OPEN_ACCOUNT_TOKEN = "open_account_token"
+CONF_DEVICE_ID = "device_id"
+CONF_LOGIN_METHOD = "login_method"
 
 # API endpoints
 API_REFRESH_TOKEN_URL = "https://api.link.aliyun.com/account/refreshByRefreshToken"

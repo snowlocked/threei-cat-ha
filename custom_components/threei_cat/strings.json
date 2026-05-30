@@ -2,23 +2,45 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to 3i Smart Device",
-        "description": "Enter your 3i device credentials. You can obtain these from the 3i app using a proxy or network capture tool.",
+        "title": "Choose Login Method",
+        "data": {
+          "method": "Login Method"
+        }
+      },
+      "login": {
+        "title": "Enter Phone Number",
+        "description": "Enter your phone number registered with the 3i app. A verification code will be sent.",
+        "data": {
+          "phone": "Phone Number",
+          "phone_region": "Region Code (e.g. 86 for China)"
+        }
+      },
+      "code": {
+        "title": "Enter Verification Code",
+        "description": "Enter the 6-digit verification code sent to your phone.",
+        "data": {
+          "verify_code": "Verification Code"
+        }
+      },
+      "manual": {
+        "title": "Manual Token Entry",
+        "description": "Enter tokens captured via mitmproxy or Frida. See README for details.",
         "data": {
           "iot_token": "IoT Token",
           "refresh_token": "Refresh Token",
           "identity_id": "Identity ID",
+          "jwt_token": "JWT Token (OpenAccount)",
+          "tenant_id": "Tenant ID",
           "mqtt_endpoint": "MQTT Endpoint",
-          "mqtt_port": "MQTT Port",
-          "api_base_url": "API Base URL",
-          "jwt_token": "JWT Token (optional)",
-          "tenant_id": "Tenant ID (optional)"
+          "mqtt_port": "MQTT Port"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid authentication credentials",
-      "unknown": "Unexpected error"
+      "send_code_failed": "Failed to send verification code. Check phone number and region code.",
+      "login_failed": "Login failed. Check verification code and try again.",
+      "invalid_auth": "Invalid credentials.",
+      "unknown": "Unexpected error occurred."
     }
   }
 }
