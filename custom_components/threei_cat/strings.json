@@ -9,7 +9,7 @@
       },
       "login": {
         "title": "Enter Phone Number",
-        "description": "Enter your phone number registered with the 3i app. A verification code will be sent.",
+        "description": "Enter your phone number registered with the 3i app.",
         "data": {
           "phone": "Phone Number",
           "phone_region": "Region Code (e.g. 86 for China)"
@@ -24,7 +24,7 @@
       },
       "manual": {
         "title": "Manual Token Entry",
-        "description": "Enter tokens captured via mitmproxy or Frida. See README for details.",
+        "description": "Enter tokens captured via mitmproxy or Frida.",
         "data": {
           "iot_token": "IoT Token",
           "refresh_token": "Refresh Token",
@@ -37,10 +37,10 @@
       }
     },
     "error": {
-      "send_code_failed": "Failed to send verification code. Check phone number and region code.",
-      "login_failed": "Login failed. Check verification code and try again.",
+      "send_code_failed": "Failed to connect: {error}",
+      "login_failed": "Login failed: {error}",
       "invalid_auth": "Invalid credentials.",
-      "unknown": "Unexpected error occurred."
+      "unknown": "Unexpected error: {error}"
     }
   }
 }

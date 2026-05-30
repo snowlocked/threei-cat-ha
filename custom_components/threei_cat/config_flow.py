@@ -12,7 +12,6 @@ from homeassistant.data_entry_flow import FlowResult
 from .auth_flow import login_with_code, send_verify_code
 from .const import (
     CONF_API_BASE_URL,
-    CONF_DEVICE_ID,
     CONF_IDENTITY_ID,
     CONF_IOT_TOKEN,
     CONF_JWT_TOKEN,
@@ -32,31 +31,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-STEP_LOGIN_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_PHONE): str,
-        vol.Optional(CONF_PHONE_REGION, default="86"): str,
-    }
-)
-
-STEP_CODE_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_VERIFY_CODE): str,
-    }
-)
-
-STEP_MANUAL_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_IOT_TOKEN): str,
-        vol.Required(CONF_REFRESH_TOKEN): str,
-        vol.Required(CONF_IDENTITY_ID): str,
-        vol.Optional(CONF_JWT_TOKEN, default=""): str,
-        vol.Optional(CONF_TENANT_ID, default=DEFAULT_TENANT_ID): str,
-        vol.Optional(CONF_MQTT_ENDPOINT, default=DEFAULT_MQTT_ENDPOINT): str,
-        vol.Optional(CONF_MQTT_PORT, default=DEFAULT_MQTT_PORT): int,
-    }
-)
-
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle config flow for 3i Smart Device."""
@@ -68,6 +42,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._phone = ""
         self._phone_region = "86"
         self._device_id = ""
+        self._error_msg = ""
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -94,7 +69,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_login(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Step 1: Enter phone number and send code."""
+        """Step 1: Enter phone number."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -106,13 +81,22 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._device_id = result.get("device_id", "")
                 return await self.async_step_code()
             else:
+                self._error_msg = result.get("error", "Unknown error")
                 errors["base"] = "send_code_failed"
-                _LOGGER.error("Failed to send code: %s", result)
+                _LOGGER.error("Failed to initialize: %s", result)
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_PHONE, default=self._phone): str,
+                vol.Optional(CONF_PHONE_REGION, default=self._phone_region): str,
+            }
+        )
 
         return self.async_show_form(
             step_id="login",
-            data_schema=STEP_LOGIN_SCHEMA,
+            data_schema=schema,
             errors=errors,
+            description_placeholders={"error": self._error_msg},
         )
 
     async def async_step_code(
@@ -129,7 +113,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
             if result.get("success"):
-                # Check if already configured
                 identity_id = result.get("identity_id", "")
                 await self.async_set_unique_id(identity_id)
                 self._abort_if_unique_id_configured()
@@ -148,13 +131,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                 )
             else:
+                self._error_msg = result.get("error", "Login failed")
                 errors["base"] = "login_failed"
                 _LOGGER.error("Login failed: %s", result)
 
         return self.async_show_form(
             step_id="code",
-            data_schema=STEP_CODE_SCHEMA,
+            data_schema=vol.Schema(
+                {vol.Required(CONF_VERIFY_CODE): str}
+            ),
             errors=errors,
+            description_placeholders={"error": self._error_msg},
         )
 
     async def async_step_manual(
@@ -184,6 +171,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="manual",
-            data_schema=STEP_MANUAL_SCHEMA,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_IOT_TOKEN): str,
+                    vol.Required(CONF_REFRESH_TOKEN): str,
+                    vol.Required(CONF_IDENTITY_ID): str,
+                    vol.Optional(CONF_JWT_TOKEN, default=""): str,
+                    vol.Optional(CONF_TENANT_ID, default=DEFAULT_TENANT_ID): str,
+                    vol.Optional(CONF_MQTT_ENDPOINT, default=DEFAULT_MQTT_ENDPOINT): str,
+                    vol.Optional(CONF_MQTT_PORT, default=DEFAULT_MQTT_PORT): int,
+                }
+            ),
             errors=errors,
         )
