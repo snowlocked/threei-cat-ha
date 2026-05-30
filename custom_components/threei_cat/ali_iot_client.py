@@ -261,30 +261,57 @@ class AliIoTClient:
 
     async def get_consumables(self) -> dict | None:
         """Fetch consumable information from the cloud API."""
-        url = f"https://{self._api_base_url}/outer/app/productInfo/getConsumablesByProductIds"
         cookies = self._build_rest_cookies()
         headers = self._build_rest_headers()
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url,
-                    json={},
-                    headers=headers,
-                    cookies=cookies,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    if resp.status != 200:
-                        _LOGGER.warning("Consumables API returned %d", resp.status)
-                        text = await resp.text()
-                        _LOGGER.debug("Response: %s", text[:500])
-                        return None
-                    data = await resp.json()
-                    _LOGGER.debug("Consumables: %s", data)
-                    return data.get("data", data)
-        except Exception:
-            _LOGGER.exception("Failed to fetch consumables")
-            return None
+        # Try multiple endpoint formats
+        endpoints = [
+            f"https://{self._api_base_url}/outer/app/productInfo/getConsumablesByProductIds",
+            f"https://{self._api_base_url}/app/user/getConsumablesInfoByUserId",
+        ]
+
+        async with aiohttp.ClientSession() as session:
+            for url in endpoints:
+                try:
+                    # Try GET first, then POST
+                    for method in ["GET", "POST"]:
+                        try:
+                            if method == "GET":
+                                resp_ctx = session.get(
+                                    url,
+                                    headers=headers,
+                                    cookies=cookies,
+                                    timeout=aiohttp.ClientTimeout(total=10),
+                                )
+                            else:
+                                resp_ctx = session.post(
+                                    url,
+                                    json={},
+                                    headers=headers,
+                                    cookies=cookies,
+                                    timeout=aiohttp.ClientTimeout(total=10),
+                                )
+
+                            async with resp_ctx as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    _LOGGER.debug(
+                                        "Consumables (%s %s): %s",
+                                        method, url, data,
+                                    )
+                                    return data.get("data", data)
+                                elif resp.status != 405:
+                                    _LOGGER.debug(
+                                        "Consumables %s %s returned %d",
+                                        method, url, resp.status,
+                                    )
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+
+        _LOGGER.warning("All consumables API endpoints failed")
+        return None
 
     async def get_clean_records(
         self, page: int = 1, page_size: int = 20
