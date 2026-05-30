@@ -260,11 +260,19 @@ class AliIoTClient:
         return headers
 
     async def get_consumables(self) -> dict | None:
-        """Fetch consumable information from the cloud API."""
+        """Fetch consumable information from the cloud API.
+
+        Note: This requires a valid JWT token from the 3i app.
+        If the token is missing or expired, this will return None.
+        The MQTT-based device properties still work without this.
+        """
+        if not self._jwt_token or self._jwt_token.startswith("OA-"):
+            _LOGGER.debug("Skipping consumables API - no valid JWT token")
+            return None
+
         cookies = self._build_rest_cookies()
         headers = self._build_rest_headers()
 
-        # Try multiple endpoint formats
         endpoints = [
             f"https://{self._api_base_url}/outer/app/productInfo/getConsumablesByProductIds",
             f"https://{self._api_base_url}/app/user/getConsumablesInfoByUserId",
@@ -272,51 +280,44 @@ class AliIoTClient:
 
         async with aiohttp.ClientSession() as session:
             for url in endpoints:
-                try:
-                    # Try GET first, then POST
-                    for method in ["GET", "POST"]:
-                        try:
-                            if method == "GET":
-                                resp_ctx = session.get(
-                                    url,
-                                    headers=headers,
-                                    cookies=cookies,
-                                    timeout=aiohttp.ClientTimeout(total=10),
-                                )
+                for method in ["POST", "GET"]:
+                    try:
+                        if method == "GET":
+                            resp_ctx = session.get(
+                                url, headers=headers, cookies=cookies,
+                                timeout=aiohttp.ClientTimeout(total=10),
+                            )
+                        else:
+                            resp_ctx = session.post(
+                                url, json={}, headers=headers, cookies=cookies,
+                                timeout=aiohttp.ClientTimeout(total=10),
+                            )
+                        async with resp_ctx as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                _LOGGER.debug("Consumables OK: %s %s", method, url)
+                                return data.get("data", data)
                             else:
-                                resp_ctx = session.post(
-                                    url,
-                                    json={},
-                                    headers=headers,
-                                    cookies=cookies,
-                                    timeout=aiohttp.ClientTimeout(total=10),
+                                _LOGGER.debug(
+                                    "Consumables %s %s -> %d",
+                                    method, url, resp.status,
                                 )
+                    except Exception as e:
+                        _LOGGER.debug("Consumables %s %s error: %s", method, url, e)
 
-                            async with resp_ctx as resp:
-                                if resp.status == 200:
-                                    data = await resp.json()
-                                    _LOGGER.debug(
-                                        "Consumables (%s %s): %s",
-                                        method, url, data,
-                                    )
-                                    return data.get("data", data)
-                                elif resp.status != 405:
-                                    _LOGGER.debug(
-                                        "Consumables %s %s returned %d",
-                                        method, url, resp.status,
-                                    )
-                        except Exception:
-                            continue
-                except Exception:
-                    continue
-
-        _LOGGER.warning("All consumables API endpoints failed")
         return None
 
     async def get_clean_records(
         self, page: int = 1, page_size: int = 20
     ) -> list | None:
-        """Fetch cleaning history records."""
+        """Fetch cleaning history records.
+
+        Note: This requires a valid JWT token from the 3i app.
+        """
+        if not self._jwt_token or self._jwt_token.startswith("OA-"):
+            _LOGGER.debug("Skipping clean records API - no valid JWT token")
+            return None
+
         url = f"https://{self._api_base_url}/device-shadow-service/app/data/flow/clean-record-timeline"
         cookies = self._build_rest_cookies()
         headers = self._build_rest_headers()
@@ -331,7 +332,7 @@ class AliIoTClient:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
-                        _LOGGER.warning("Clean records API returned %d", resp.status)
+                        _LOGGER.debug("Clean records API returned %d", resp.status)
                         return None
                     data = await resp.json()
                     _LOGGER.debug("Clean records: %s", data)
@@ -340,5 +341,5 @@ class AliIoTClient:
                         return result.get("list", result.get("records", []))
                     return result if isinstance(result, list) else []
         except Exception:
-            _LOGGER.exception("Failed to fetch clean records")
+            _LOGGER.debug("Failed to fetch clean records", exc_info=True)
             return None
