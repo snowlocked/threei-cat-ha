@@ -1,0 +1,255 @@
+"""Aliyun IoT MQTT client for 3i Smart Device."""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from typing import Any, Callable
+
+import paho.mqtt.client as mqtt
+
+from .const import (
+    API_REFRESH_TOKEN_URL,
+    DEFAULT_MQTT_ENDPOINT,
+    DEFAULT_MQTT_PORT,
+    KEEPALIVE,
+    REFRESH_MARGIN,
+    REFRESH_TOKEN_LIFETIME,
+    TOPIC_DOWN_EVENTS,
+    TOPIC_DOWN_PROPERTIES,
+    TOPIC_DOWN_STATUS,
+    TOPIC_UP_GET,
+    TOPIC_UP_SET,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class AliIoTClient:
+    """MQTT client for Aliyun IoT."""
+
+    def __init__(
+        self,
+        identity_id: str,
+        iot_token: str,
+        refresh_token: str,
+        mqtt_endpoint: str = DEFAULT_MQTT_ENDPOINT,
+        mqtt_port: int = DEFAULT_MQTT_PORT,
+        on_message: Callable[[str, dict], None] | None = None,
+        on_token_refresh: Callable[[str, str], None] | None = None,
+    ) -> None:
+        """Initialize the client."""
+        self._identity_id = identity_id
+        self._iot_token = iot_token
+        self._refresh_token = refresh_token
+        self._mqtt_endpoint = mqtt_endpoint
+        self._mqtt_port = mqtt_port
+        self._on_message = on_message
+        self._on_token_refresh = on_token_refresh
+        self._client: mqtt.Client | None = None
+        self._connected = False
+        self._token_acquired_at = time.time()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._refresh_task: asyncio.Task | None = None
+
+    @property
+    def connected(self) -> bool:
+        """Return if connected."""
+        return self._connected
+
+    def _build_client(self) -> mqtt.Client:
+        """Build the MQTT client."""
+        client_id = f"{self._identity_id}|securemode=2,signmethod=hmacsha1|"
+        client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
+        client.username_pw_set(self._identity_id, self._iot_token)
+        client.on_connect = self._on_connect
+        client.on_disconnect = self._on_disconnect
+        client.on_message = self._on_mqtt_message
+        client.reconnect_delay_set(min_delay=1, max_delay=120)
+        return client
+
+    def _on_connect(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        flags: dict,
+        rc: int,
+    ) -> None:
+        """Handle connection."""
+        if rc == 0:
+            _LOGGER.info("Connected to Aliyun IoT MQTT broker")
+            self._connected = True
+            client.subscribe(TOPIC_DOWN_PROPERTIES)
+            client.subscribe(TOPIC_DOWN_EVENTS)
+            client.subscribe(TOPIC_DOWN_STATUS)
+            _LOGGER.info("Subscribed to device topics")
+        else:
+            _LOGGER.error("MQTT connection failed with code %d", rc)
+            self._connected = False
+
+    def _on_disconnect(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        rc: int,
+    ) -> None:
+        """Handle disconnection."""
+        self._connected = False
+        if rc != 0:
+            _LOGGER.warning("MQTT disconnected unexpectedly (rc=%d), will reconnect", rc)
+        else:
+            _LOGGER.info("MQTT disconnected")
+
+    def _on_mqtt_message(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        msg: mqtt.MQTTMessage,
+    ) -> None:
+        """Handle incoming MQTT message."""
+        try:
+            payload = json.loads(msg.payload.decode())
+            _LOGGER.debug("Received message on %s: %s", msg.topic, payload)
+            if self._on_message:
+                if self._loop and self._loop.is_running():
+                    self._loop.call_soon_threadsafe(
+                        self._on_message, msg.topic, payload
+                    )
+                else:
+                    self._on_message(msg.topic, payload)
+        except json.JSONDecodeError:
+            _LOGGER.warning("Failed to decode MQTT message on %s", msg.topic)
+        except Exception:
+            _LOGGER.exception("Error handling MQTT message on %s", msg.topic)
+
+    async def async_connect(self) -> None:
+        """Connect to MQTT broker."""
+        self._loop = asyncio.get_event_loop()
+        self._client = self._build_client()
+        try:
+            self._client.connect_async(
+                self._mqtt_endpoint, self._mqtt_port, keepalive=KEEPALIVE
+            )
+            self._client.loop_start()
+            _LOGGER.info(
+                "Connecting to %s:%d", self._mqtt_endpoint, self._mqtt_port
+            )
+        except Exception:
+            _LOGGER.exception("Failed to start MQTT connection")
+            raise
+
+    async def async_disconnect(self) -> None:
+        """Disconnect from MQTT broker."""
+        if self._refresh_task:
+            self._refresh_task.cancel()
+            self._refresh_task = None
+        if self._client:
+            self._client.loop_stop()
+            self._client.disconnect()
+            self._client = None
+        self._connected = False
+        _LOGGER.info("MQTT client disconnected")
+
+    def publish_property_set(self, params: dict[str, Any]) -> None:
+        """Publish a property set command."""
+        if not self._client or not self._connected:
+            _LOGGER.warning("Cannot publish: not connected")
+            return
+        message = {
+            "id": str(int(time.time() * 1000)),
+            "version": "1.0",
+            "method": "thing.service.property.set",
+            "params": params,
+        }
+        payload = json.dumps(message)
+        _LOGGER.debug("Publishing to %s: %s", TOPIC_UP_SET, payload)
+        self._client.publish(TOPIC_UP_SET, payload, qos=1)
+
+    def publish_property_get(self, params: dict[str, Any] | None = None) -> None:
+        """Publish a property get command."""
+        if not self._client or not self._connected:
+            _LOGGER.warning("Cannot publish: not connected")
+            return
+        message = {
+            "id": str(int(time.time() * 1000)),
+            "version": "1.0",
+            "method": "thing.service.property.get",
+            "params": params or {},
+        }
+        payload = json.dumps(message)
+        _LOGGER.debug("Publishing to %s: %s", TOPIC_UP_GET, payload)
+        self._client.publish(TOPIC_UP_GET, payload, qos=1)
+
+    async def refresh_token(self) -> bool:
+        """Refresh the IoT token."""
+        import aiohttp
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    API_REFRESH_TOKEN_URL,
+                    json={"refreshToken": self._refresh_token},
+                    headers={"Content-Type": "application/json"},
+                ) as resp:
+                    if resp.status != 200:
+                        _LOGGER.error(
+                            "Token refresh failed with status %d", resp.status
+                        )
+                        return False
+                    data = await resp.json()
+                    new_iot_token = data.get("iotToken") or data.get("data", {}).get(
+                        "iotToken"
+                    )
+                    new_refresh_token = data.get(
+                        "refreshToken"
+                    ) or data.get("data", {}).get("refreshToken")
+                    if not new_iot_token:
+                        _LOGGER.error("No iotToken in refresh response: %s", data)
+                        return False
+                    old_token = self._iot_token
+                    self._iot_token = new_iot_token
+                    if new_refresh_token:
+                        self._refresh_token = new_refresh_token
+                    self._token_acquired_at = time.time()
+                    _LOGGER.info("IoT token refreshed successfully")
+                    if self._on_token_refresh:
+                        self._on_token_refresh(
+                            self._iot_token, self._refresh_token
+                        )
+                    # Reconnect with new token
+                    await self._reconnect_with_new_token()
+                    return True
+        except Exception:
+            _LOGGER.exception("Exception during token refresh")
+            return False
+
+    async def _reconnect_with_new_token(self) -> None:
+        """Reconnect to MQTT with new token."""
+        if self._client:
+            self._client.loop_stop()
+            self._client.disconnect()
+            self._client = None
+        self._connected = False
+        self._client = self._build_client()
+        try:
+            self._client.connect_async(
+                self._mqtt_endpoint, self._mqtt_port, keepalive=KEEPALIVE
+            )
+            self._client.loop_start()
+            _LOGGER.info("Reconnected MQTT with refreshed token")
+        except Exception:
+            _LOGGER.exception("Failed to reconnect with new token")
+
+    def get_seconds_until_refresh(self) -> float:
+        """Get seconds until token needs refresh."""
+        elapsed = time.time() - self._token_acquired_at
+        remaining = REFRESH_TOKEN_LIFETIME - elapsed - REFRESH_MARGIN
+        return max(0, remaining)
+
+    def update_iot_token(self, iot_token: str, refresh_token: str | None = None) -> None:
+        """Update tokens (e.g., from config entry update)."""
+        self._iot_token = iot_token
+        if refresh_token:
+            self._refresh_token = refresh_token
+        self._token_acquired_at = time.time()

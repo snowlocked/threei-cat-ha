@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to 3i Smart Device",
+        "description": "Enter your 3i device credentials. You can obtain these from the 3i app using a proxy or network capture tool.",
+        "data": {
+          "iot_token": "IoT Token",
+          "refresh_token": "Refresh Token",
+          "identity_id": "Identity ID",
+          "mqtt_endpoint": "MQTT Endpoint",
+          "mqtt_port": "MQTT Port"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid authentication credentials",
+      "unknown": "Unexpected error"
+    }
+  }
+}

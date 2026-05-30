@@ -1,0 +1,7 @@
+{
+  "name": "3i Smart Cat Litter Box",
+  "homeassistant": "2024.1.0",
+  "render_readme": true,
+  "country": ["CN", "US", "EU"],
+  "iot_class": "Cloud Push"
+}

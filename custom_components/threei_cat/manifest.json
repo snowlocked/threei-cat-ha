@@ -1,0 +1,12 @@
+{
+  "domain": "threei_cat",
+  "name": "3i Smart Device",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/your-repo/threei-cat-ha",
+  "iot_class": "cloud_push",
+  "requirements": ["paho-mqtt>=1.6.1"],
+  "version": "1.0.0",
+  "integration_type": "device"
+}
