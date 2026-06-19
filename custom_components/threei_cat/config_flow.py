@@ -101,18 +101,14 @@ def _build_device_select_schema(devices: list[dict[str, Any]]) -> vol.Schema:
 
 
 # ========================================================================
-# 手动输入（备选）
+# 手动输入（备选）- 简化版，只需 authorization token
 # ========================================================================
 
 STEP_MANUAL_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_USERNAME): str,
-        vol.Required(CONF_USER_ID): str,
-        vol.Required(CONF_OPEN_ID): str,
-        vol.Required(CONF_SID): str,
-        vol.Required(CONF_REFRESH_TOKEN): str,
-        vol.Optional(CONF_AUTHORIZATION, default=""): str,
-        vol.Optional(CONF_CLIENT_TOKEN, default=""): str,
+        vol.Required(CONF_AUTHORIZATION): str,
+        vol.Optional(CONF_USERNAME, default="manual_user"): str,
+        vol.Optional(CONF_USER_ID, default=""): str,
         vol.Optional(CONF_TENANT_ID, default=DEFAULT_TENANT_ID): str,
         vol.Optional(CONF_APP_ID, default=DEFAULT_APP_ID): str,
         vol.Optional(CONF_APP_KEY, default=DEFAULT_APP_KEY): str,
@@ -287,31 +283,37 @@ class ThreeiConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_manual(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """手动输入令牌（来自抓包）。"""
+        """手动输入 authorization token（来自抓包）。"""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            username = user_input[CONF_USERNAME]
-            await self.async_set_unique_id(username.lower())
-            self._abort_if_unique_id_configured()
-
-            # 校验令牌至少要有 sid 和 refresh_token
-            if not user_input.get(CONF_SID) or not user_input.get(CONF_REFRESH_TOKEN):
+            auth = user_input.get(CONF_AUTHORIZATION, "").strip()
+            if not auth or len(auth) < 50:
                 errors["base"] = "missing_token"
             else:
-                # 直接创建 entry，不去验证 token
-                # 用户承担风险
-                title = f"3i ({username}) [manual]"
+                username = user_input.get(CONF_USERNAME, "manual_user")
+                user_id = user_input.get(CONF_USER_ID, "")
+
+                # 从 JWT 中提取 userId（如果未提供）
+                if not user_id and auth.count(".") == 2:
+                    try:
+                        import base64, json
+                        payload_b64 = auth.split(".")[1]
+                        payload_b64 += "=" * (4 - len(payload_b64) % 4)
+                        payload = json.loads(base64.b64decode(payload_b64))
+                        value = json.loads(payload.get("value", "{}"))
+                        user_id = value.get("id", "")
+                    except Exception:
+                        pass
+
+                await self.async_set_unique_id(username.lower())
+                self._abort_if_unique_id_configured()
+
+                title = f"3i ({username}) [token]"
                 data = {
                     CONF_USERNAME: username,
-                    CONF_USER_ID: user_input.get(CONF_USER_ID, ""),
-                    CONF_OPEN_ID: user_input.get(CONF_OPEN_ID, ""),
-                    CONF_SID: user_input.get(CONF_SID, ""),
-                    CONF_REFRESH_TOKEN: user_input.get(CONF_REFRESH_TOKEN, ""),
-                    CONF_AUTHORIZATION: user_input.get(
-                        CONF_AUTHORIZATION, user_input.get(CONF_SID, "")
-                    ),
-                    CONF_CLIENT_TOKEN: user_input.get(CONF_CLIENT_TOKEN, ""),
+                    CONF_USER_ID: user_id,
+                    CONF_AUTHORIZATION: auth,
                     CONF_TENANT_ID: user_input.get(CONF_TENANT_ID, DEFAULT_TENANT_ID),
                     CONF_APP_ID: user_input.get(CONF_APP_ID, DEFAULT_APP_ID),
                     CONF_APP_KEY: user_input.get(CONF_APP_KEY, DEFAULT_APP_KEY),
@@ -325,7 +327,9 @@ class ThreeiConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="manual",
             data_schema=STEP_MANUAL_SCHEMA,
             errors=errors,
-            description_placeholders={"info": "请输入从抓包中获得的 3i App 令牌"},
+            description_placeholders={
+                "info": "从抓包中获取 authorization 头的值（JWT token）"
+            },
         )
 
     # ------------------------------------------------------------------

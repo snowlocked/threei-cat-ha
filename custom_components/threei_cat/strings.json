@@ -25,16 +25,12 @@
         }
       },
       "manual": {
-        "title": "3i 设备 - 手动输入令牌",
-        "description": "高级选项：从抓包中获取并填入令牌信息。",
+        "title": "3i 设备 - 手动输入 Token",
+        "description": "从抓包中获取 authorization 头的值（JWT token）。只需填入 authorization 字段即可。",
         "data": {
-          "username": "用户名",
-          "user_id": "用户 ID",
-          "open_id": "Open ID",
-          "sid": "SID (session ID)",
-          "refresh_token": "Refresh Token",
-          "authorization": "Authorization",
-          "client_token": "Client Token (可选)",
+          "authorization": "Authorization Token (JWT)",
+          "username": "用户名 (可选)",
+          "user_id": "用户 ID (可选)",
           "tenant_id": "Tenant ID",
           "app_id": "App ID",
           "app_key": "App Key",

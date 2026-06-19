@@ -267,6 +267,19 @@ class ThreeiApiClient:
             _LOGGER.info("Token refreshed successfully")
             return True
 
+    def set_authorization_token(self, token: str, user_id: str = "") -> None:
+        """直接设置 authorization token（用于手动输入模式）。
+
+        Args:
+            token: JWT authorization token
+            user_id: 用户 ID（可选，可从 JWT 中提取）
+        """
+        self._authorization = token
+        if user_id:
+            self._user_id = user_id
+        self._token_acquired_at = time.time()
+        _LOGGER.info("Authorization token set directly (len=%d)", len(token))
+
     def get_token_age(self) -> float:
         """获取令牌已使用时间（秒）。"""
         if self._token_acquired_at == 0:

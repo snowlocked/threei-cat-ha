@@ -356,18 +356,23 @@ class ThreeiDataUpdateCoordinator(DataUpdateCoordinator):
         self.api_client.load_from_dict(load_data)
 
         # 如果没有 sid（首次登录失败），尝试重新登录
+        # 但如果已有 authorization token，跳过重新登录
         if not self.api_client.sid or not self.api_client.refresh_token:
-            password = data.get("password", "")
-            if password:
-                _LOGGER.info("No stored tokens, re-login with stored password")
-                login_result = await self.api_client.async_login(password)
-                if login_result.get("success"):
-                    # 保存到 entry
-                    self._persist_tokens(login_result)
-                else:
-                    _LOGGER.warning(
-                        "Stored password login failed: %s", login_result.get("error")
-                    )
+            # 检查是否有直接提供的 authorization token
+            if self.api_client.authorization:
+                _LOGGER.info("Using directly provided authorization token")
+            else:
+                password = data.get("password", "")
+                if password:
+                    _LOGGER.info("No stored tokens, re-login with stored password")
+                    login_result = await self.api_client.async_login(password)
+                    if login_result.get("success"):
+                        # 保存到 entry
+                        self._persist_tokens(login_result)
+                    else:
+                        _LOGGER.warning(
+                            "Stored password login failed: %s", login_result.get("error")
+                        )
 
     async def _discover_devices(self) -> None:
         """发现用户绑定的设备。"""
