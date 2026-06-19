@@ -1,135 +1,206 @@
-# 3i Smart Cat Litter Box - Home Assistant Integration
+# 3i Smart Device (3i 猫砂盆) - Home Assistant 集成
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
 
-Control your **3i Smart Cat Litter Box** (by 3irobotix / PiceaCorp) in Home Assistant via the Aliyun IoT MQTT protocol.
+> 基于对 3i 官方 Android App 的抓包分析重构的 Home Assistant 集成。
+> 本集成**仅依赖 HTTP API**（不需要 MQTT），并支持用户名+密码登录。
 
-> This integration is based on reverse engineering the official `com.sc.iot.device` Android app.
+将你的 **3i 智能猫砂盆**（3irobotix / PiceaCorp 出品）接入 Home Assistant。
 
-## Features
+## ✨ 特性
 
-- **Sensor**: Cat weight, deodorize level, firmware version, clean status
-- **Binary Sensor**: Bin full warning, auto clean active
-- **Switch**: Auto clean, child lock, device light, auto power off
-- **Select**: Deodorize level (off/low/medium/high)
-- **Button**: Start/stop clean, return to dock, OTA upgrade
+### 传感器 (Sensor)
+- 电池电量
+- 工作模式
+- 清洁状态
+- 除臭档位
+- 固件版本 / MCU 版本
+- 猫体重（部分型号）
+- 上次清洁面积、时长、时间
+- 总清洁次数
+- 上次制水时间、容量
+- 各种耗材寿命（猫砂、除臭剂、垃圾袋、滤芯等）
 
-## Prerequisites
+### 二进制传感器 (Binary Sensor)
+- 在线状态
+- 充电中
+- 集便箱满
+- 水量不足
+- 故障状态
 
-You need the **Aliyun IoT device triple** (productKey, deviceName, deviceSecret).
+### 开关 (Switch)
+- 自动清洁
+- 童锁
+- 设备灯
+- 节能模式
+- 除臭开关
 
-### How to get credentials
+### 选择器 (Select)
+- 工作模式（手动/自动/智能/回充/强力）
+- 除臭档位（关/低/中/高/自动）
 
-**Option 1: Packet capture (recommended)**
-1. Install the 3i app on your phone
-2. Set up MITM proxy (e.g., mitmproxy, Charles)
-3. Connect the device and observe MQTT traffic
-4. Extract the device credentials from the MQTT CONNECT packet
+### 按钮 (Button)
+- 开始清洁
+- 停止清洁
+- 返回充电桩
+- 刷新数据
+- 检查固件升级
 
-**Option 2: Frida hook**
-1. Root your phone or use an emulator
-2. Run Frida with a hook on `MqttConfigure` class
-3. Dump `productKey`, `deviceName`, `deviceSecret` at runtime
+### 服务 (Service)
+- `threei_cat.refresh_all` - 立即刷新所有设备
 
-**Option 3: Aliyun IoT Platform**
-1. If you have access to the Aliyun IoT console
-2. Find your device under the product
-3. Copy the device triple from the device detail page
+## 📋 前置要求
 
-## Installation
+- Home Assistant 2024.1.0 或更高版本
+- 你的 3i App 账号（用户名/邮箱 + 密码）
+- 设备已通过 3i App 绑定到该账号
 
-### HACS (Recommended)
+## 🚀 安装
 
-1. Open HACS in your Home Assistant instance
-2. Go to "Integrations"
-3. Click the three dots menu → "Custom repositories"
-4. Add this repository URL
-5. Install "3i Smart Cat Litter Box"
-6. Restart Home Assistant
+### 通过 HACS（推荐）
 
-### Manual
+1. 打开 HACS → Integrations
+2. 点击右上角菜单 → Custom repositories
+3. 添加本仓库 URL（类别选 Integration）
+4. 安装 "3i Smart Device"
+5. 重启 Home Assistant
 
-1. Copy the `custom_components/threei_cat/` folder to your HA `config/custom_components/` directory
-2. Install the `paho-mqtt` Python package: `pip install paho-mqtt>=1.6.1`
-3. Restart Home Assistant
+### 手动安装
 
-## Configuration
+1. 将 `custom_components/threei_cat/` 文件夹复制到你的 HA 配置目录的 `custom_components/` 下
+2. 重启 Home Assistant
 
-1. Go to Settings → Devices & Services
-2. Click "Add Integration"
-3. Search for "3i Smart Cat Litter Box"
-4. Enter your device credentials:
-   - **Product Key**: Your Aliyun IoT product key
-   - **Device Name**: Your device identifier
-   - **Device Secret**: Your HMAC signing secret
+## ⚙️ 配置
 
-## Architecture
+1. 进入 设置 → 设备与服务
+2. 点击 "添加集成"
+3. 搜索 "3i Smart Device"
+4. 选择登录方式：
+   - **用户名 + 密码**（推荐）
+   - **手动输入令牌**（高级，从抓包获取）
+
+### 方式一：用户名 + 密码
+
+输入你在 3i App 中使用的用户名（邮箱或手机号）和密码。
+
+> 注意：抓包发现 3i App 实际使用的是**用户名+密码登录**，而不是手机号+验证码。
+
+### 方式二：手动输入令牌（高级）
+
+如果你不想直接输入密码，可以从抓包（如 mitmproxy、Charles）中提取以下信息：
+
+- `username` - 用户名
+- `userId` / `openId` - 用户 ID
+- `sid` - 会话 ID
+- `refreshToken` - 刷新令牌
+
+这些信息可以从抓包中请求 `living-account.cn-shanghai.aliyuncs.com/api/prd/loginbyoauth.json` 的响应中找到。
+
+## 🏗️ 架构
 
 ```
-Home Assistant                    Aliyun IoT Cloud                 Device
-     │                                  │                            │
-     │  MQTT (TLS 443)                  │                            │
-     ├─────────────────────────────────►│                            │
-     │  topic: /thing/service/          │                            │
-     │         property/set             │  MQTT                      │
-     │                                  ├───────────────────────────►│
-     │                                  │                            │
-     │                                  │  MQTT                      │
-     │                                  │◄───────────────────────────┤
-     │  topic: /app/down/               │  topic: /thing/event/      │
-     │         thing/properties         │         property/post      │
-     │◄─────────────────────────────────┤                            │
-     │                                  │                            │
+Home Assistant                        3i Cloud API                      Device
+     │                                      │                              │
+     │  HTTP (HTTPS 443)                    │                              │
+     ├─────────────────────────────────────►│                              │
+     │  GET /device-service/app/            │                              │
+     │      device/shadow                   │                              │
+     │                                      │  (设备状态轮询 30s)          │
+     │◄─────────────────────────────────────┤                              │
+     │                                      │                              │
+     │  POST /infrastructure-third/         │                              │
+     │       app/record/page                │                              │
+     │                                      │  (清洁/制水记录 5min)        │
+     │◄─────────────────────────────────────┤                              │
 ```
 
-### MQTT Connection
+### 服务器架构（中国区）
 
-- **Broker**: `{productKey}.iot-as-mqtt.cn-shanghai.aliyuncs.com`
-- **Port**: 443 (TLS)
-- **Auth**: HMAC-SHA1 signed credentials
-- **Protocol**: Aliyun IoT Thing Model
+| 服务 | 地址 |
+|------|------|
+| 阿里云 OpenAccount | `living-account.cn-shanghai.aliyuncs.com` |
+| 3i 主 CDN API | `cn-cdnappaiot.3itech.com` |
+| 3i Open OAuth | `cn-api-aiot.3irobotix.net` |
+| 3i App API | `cn-appaiot.3irobotix.net` |
+| 3i MQTT Broker | `cn-mqttaiot.3irobotix.net:8883` |
+| 大数据/埋点 | `bigdata-aiot.piceaiot.com` |
 
-### Message Format
+### 关键参数
 
-```json
-{
-  "id": "123",
-  "version": "1.0",
-  "method": "thing.service.property.set",
-  "params": {
-    "property_key": "value"
-  }
-}
-```
+| 参数 | 值 |
+|------|------|
+| appId | `1560565274212143104` |
+| appKey | `6da7aec718724ed3` |
+| tenantId | `1528911334443982848` (3irobotix) |
+| regionId | 15 (中国) |
 
-## Known Limitations
+## ⚠️ 已知限制
 
-1. **Property names may vary** between device models/firmware versions
-2. **Some properties are read-only** (e.g., cat weight, firmware version)
-3. **The device triple is obtained at runtime** by the app — you need to extract it yourself
-4. **No auto-discovery** — manual configuration required
-5. **Cloud dependency** — requires Aliyun IoT cloud to be reachable
+### 控制功能（开关、模式选择）
 
-## Troubleshooting
+由于抓包发现该设备的 `iotId` 通常为 `null`（设备未通过云端授权），
+**通过云端直接控制设备的能力受限**。本集成在这种情况下：
+- 读取状态：✅ 正常工作
+- 写入命令：⚠️ 命令可能无法到达设备，但会被记录用于后续扩展
 
-### Cannot connect to MQTT broker
-- Verify your device credentials are correct
-- Check that your HA instance can reach `*.iot-as-mqtt.cn-shanghai.aliyuncs.com:443`
-- Ensure `paho-mqtt` is installed
+如果你已通过 3i App 完成了设备的云端授权（iotId 非空），
+控制命令应该可以正常工作。
 
-### Entities show "unavailable"
-- The device may be offline
-- Check the MQTT connection in HA logs (enable debug logging for `custom_components.threei_cat`)
+### MQTT 协议
 
-### Enable debug logging
-```yaml
-logger:
-  logs:
-    custom_components.threei_cat: debug
-```
+抓包发现 3i App 实际上使用 MQTT (端口 8883) 与设备通信，但 **App 起到中继作用**。
+设备并不直接连接到 MQTT Broker，而是通过 App 进行控制。
+因此本集成**不使用 MQTT**，仅使用 HTTP API 进行状态轮询。
 
-## Credits
+## 🐛 故障排查
 
-- Protocol analysis based on reverse engineering the `com.sc.iot.device` APK
-- Uses Aliyun IoT Thing Model protocol
-- Built with Eclipse Paho MQTT client
+### 登录失败
+
+- 确认用户名和密码正确（可在 3i App 中登录验证）
+- 确认网络可访问 `living-account.cn-shanghai.aliyuncs.com` 和 `cn-cdnappaiot.3itech.com`
+- 启用调试日志：
+  ```yaml
+  logger:
+    logs:
+      custom_components.threei_cat: debug
+  ```
+
+### 设备不显示数据
+
+- 检查 coordinator 日志，确认 API 调用是否成功
+- 设备可能离线（检查 online 传感器）
+- token 可能已过期 - 系统会自动刷新，但首次配置后需要等待
+
+### 重新认证
+
+如果 token 完全失效（无法自动刷新），可以：
+1. 删除现有集成
+2. 重新添加并登录
+3. 或使用 reauth flow（HA 会自动提示）
+
+## 📝 开发说明
+
+### 主要抓包发现
+
+1. **登录方式**：3i App 使用用户名+密码登录，不是手机号+验证码
+2. **服务器**：3i 自有服务器 (`cn-cdnappaiot.3itech.com`)，不是阿里云 IoT
+3. **设备控制**：走 HTTP API 而非 MQTT
+4. **设备 iotId**：通常是 null（未通过云端授权）
+
+### 主要 API 端点
+
+- `POST living-account.cn-shanghai.aliyuncs.com/api/prd/loginbyoauth.json` - 登录
+- `POST cn-cdnappaiot.3itech.com/device-service/app/bind/listByUserId` - 设备列表
+- `POST cn-cdnappaiot.3itech.com/device-service/app/device/shadow` - 设备状态
+- `POST cn-cdnappaiot.3itech.com/infrastructure-third/app/record/page` - 清洁记录
+- `GET  cn-cdnappaiot.3itech.com/data-statistics-service/app/data/flow/eventStatistics/page` - 制水事件
+- `POST cn-cdnappaiot.3itech.com/product-service/outer/app/productInfo/getConsumablesByProductIds` - 耗材
+
+## 📜 许可证
+
+MIT
+
+## 🙏 致谢
+
+- 基于对 3i 官方 App 的抓包分析
+- 仅供个人学习研究使用

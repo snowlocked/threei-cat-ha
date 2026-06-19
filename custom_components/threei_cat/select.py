@@ -1,5 +1,8 @@
-"""Select platform for 3i Smart Device."""
+"""Select platform for 3i Smart Device (猫砂盆选择器)."""
 from __future__ import annotations
+
+import logging
+from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
@@ -7,13 +10,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import (
-    DOMAIN,
-    SUCTION_LEVELS,
-    WATER_LEVELS,
-    WORK_MODES,
-)
-from .coordinator import ThreeiDataUpdateCoordinator
+from .const import DEODORIZE_LEVELS, DOMAIN, MANUFACTURER, WORK_MODES
+from .coordinator import ThreeiDataUpdateCoordinator, ThreeiDeviceData
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -21,85 +21,121 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up 3i select entities."""
+    """设置 3i 选择实体。"""
     coordinator: ThreeiDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        [
-            ThreeiWorkModeSelect(coordinator),
-            ThreeiWaterLevelSelect(coordinator),
-            ThreeiSuctionLevelSelect(coordinator),
-        ]
-    )
+
+    entities: list[SelectEntity] = []
+    for device_id in coordinator.devices:
+        entities.extend([
+            ThreeiWorkModeSelect(coordinator, device_id),
+            ThreeiDeodorizeLevelSelect(coordinator, device_id),
+        ])
+
+    async_add_entities(entities)
 
 
 class ThreeiBaseSelect(CoordinatorEntity, SelectEntity):
-    """Base class for 3i selects."""
+    """3i 选择器基类。"""
 
     _attr_has_entity_name = True
+    coordinator: ThreeiDataUpdateCoordinator
 
     def __init__(
         self,
         coordinator: ThreeiDataUpdateCoordinator,
+        device_id: str,
         key: str,
         name: str,
-        options_map: dict,
+        options_map: dict[int, str],
     ) -> None:
-        """Initialize the select."""
         super().__init__(coordinator)
+        self._device_id = str(device_id)
         self._key = key
         self._options_map = options_map
         self._reverse_map = {v: k for k, v in options_map.items()}
         self._attr_name = name
-        self._attr_unique_id = f"{coordinator.device_id}_{key}"
-        self._attr_device_info = coordinator.device_info
+        self._attr_unique_id = f"{self._device_id}_select_{key}"
         self._attr_options = list(options_map.values())
+
+    def _get_device(self) -> ThreeiDeviceData | None:
+        return self.coordinator.get_device(self._device_id)
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        dev = self._get_device()
+        if dev:
+            return {
+                "identifiers": {(DOMAIN, self._device_id)},
+                "name": dev.name,
+                "manufacturer": MANUFACTURER,
+                "model": dev.product_mode_code or "3i Device",
+                "sw_version": dev.firmware_version,
+                "hw_version": dev.mcu_version,
+                "serial_number": dev.sn,
+            }
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": "3i Device",
+            "manufacturer": MANUFACTURER,
+            "model": "3i Device",
+        }
+
+    @property
+    def available(self) -> bool:
+        dev = self._get_device()
+        return dev is not None and dev.is_available
 
     @property
     def current_option(self) -> str | None:
-        """Return the current option."""
-        val = self.coordinator.device_state.get(self._key)
-        if val is not None:
-            return self._options_map.get(val, f"Unknown ({val})")
+        dev = self._get_device()
+        if not dev:
+            return None
+        # 检查属性值
+        val = dev.properties.get(self._key)
+        if val is None:
+            # 兜底：尝试专门的方法
+            val = self._read_dev_value(dev)
+        if val is None:
+            return None
+        try:
+            val_int = int(val)
+        except (ValueError, TypeError):
+            return None
+        return self._options_map.get(val_int, f"Unknown ({val_int})")
+
+    def _read_dev_value(self, dev: ThreeiDeviceData) -> Any:
+        """子类可重写以从专门的属性获取值。"""
         return None
 
     async def async_select_option(self, option: str) -> None:
-        """Select an option."""
+        """选择选项。"""
         val = self._reverse_map.get(option)
-        if val is not None:
-            self._set_value(val)
+        if val is None:
+            return
+        _LOGGER.info(
+            "Set %s=%s for device %s",
+            self._key, val, self._device_id,
+        )
+        await self.coordinator.async_control_device(
+            self._device_id, {self._key: val}
+        )
 
 
 class ThreeiWorkModeSelect(ThreeiBaseSelect):
-    """Select entity for work mode."""
+    """工作模式选择器。"""
 
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator, "work_mode", "Work Mode", WORK_MODES)
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "workMode", "Work Mode", WORK_MODES)
 
-    def _set_value(self, val: int) -> None:
-        """Set the work mode."""
-        self.coordinator.set_work_mode(val)
+    def _read_dev_value(self, dev: ThreeiDeviceData) -> Any:
+        return dev.work_mode
 
 
-class ThreeiWaterLevelSelect(ThreeiBaseSelect):
-    """Select entity for water level."""
+class ThreeiDeodorizeLevelSelect(ThreeiBaseSelect):
+    """除臭档位选择器。"""
 
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator, "water_level", "Water Level", WATER_LEVELS)
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "deodorizeLevel", "Deodorize Level", DEODORIZE_LEVELS)
 
-    def _set_value(self, val: int) -> None:
-        """Set the water level."""
-        self.coordinator.set_water_level(val)
-
-
-class ThreeiSuctionLevelSelect(ThreeiBaseSelect):
-    """Select entity for suction level."""
-
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator, "suction_level", "Suction Level", SUCTION_LEVELS)
-
-    def _set_value(self, val: int) -> None:
-        """Set the suction level."""
-        self.coordinator.set_suction_level(val)
+    def _read_dev_value(self, dev: ThreeiDeviceData) -> Any:
+        return dev.deodorize_level

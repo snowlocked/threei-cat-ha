@@ -1,17 +1,31 @@
-# 3i Smart Cat Litter Box
+# 3i Smart Device (3i 猫砂盆)
 
-Control your 3i Smart Cat Litter Box in Home Assistant.
+将 **3i 智能猫砂盆**（3irobotix / PiceaCorp 出品）接入 Home Assistant。
 
-## Features
+## 功能
 
-- Sensors: Cat weight, deodorize level, firmware version, clean status
-- Binary Sensors: Bin full, auto clean active
-- Switches: Auto clean, child lock, device light, auto power off
-- Buttons: Start/stop clean, return to dock, OTA upgrade
-- Select: Deodorize level
+- **传感器**: 电池、工作模式、清洁状态、除臭档位、固件版本、猫体重、清洁记录、制水记录、耗材寿命
+- **二进制传感器**: 在线状态、充电中、集便箱满、水量不足、故障
+- **开关**: 自动清洁、童锁、设备灯、节能模式、除臭
+- **选择器**: 工作模式、除臭档位
+- **按钮**: 开始/停止清洁、返回充电桩、刷新数据、检查固件升级
+- **多设备支持**
 
-## Setup
+## 设置
 
-Requires Aliyun IoT device credentials (productKey, deviceName, deviceSecret).
+1. 在 HACS 中添加本仓库为 Custom Repository
+2. 安装集成
+3. 重启 Home Assistant
+4. 在 设置 → 设备与服务 中添加 "3i Smart Device"
+5. 输入 3i App 的用户名（邮箱/手机号）和密码
 
-See [README](https://github.com/your-repo/threei-cat-ha) for detailed setup instructions.
+> **重要**：本集成使用 HTTP API 轮询（每 30 秒），不需要 MQTT 连接。
+> 由于 3i App 实际使用用户名+密码登录（不是手机号+验证码），请使用密码登录方式。
+
+## 已知限制
+
+- 由于设备 `iotId` 通常为 `null`（未通过云端授权），控制类操作（开关、模式选择）可能不生效
+- 状态读取（传感器、二进制传感器）正常工作
+- 当前仅支持中国区服务器
+
+更多信息请参见 [README](https://github.com/your-repo/threei-cat-ha)。

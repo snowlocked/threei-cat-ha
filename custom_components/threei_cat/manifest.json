@@ -1,12 +1,16 @@
 {
   "domain": "threei_cat",
-  "name": "3i Smart Device",
+  "name": "3i Smart Device (3i 猫砂盆)",
+  "version": "2.0.0",
+  "documentation": "https://github.com/your-repo/threei-cat-ha",
+  "issue_tracker": "https://github.com/your-repo/threei-cat-ha/issues",
   "codeowners": [],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/your-repo/threei-cat-ha",
-  "iot_class": "cloud_push",
-  "requirements": ["paho-mqtt>=1.6.1"],
-  "version": "1.2.0",
-  "integration_type": "device"
+  "requirements": ["aiohttp>=3.9.0"],
+  "iot_class": "local_polling",
+  "integration_type": "device",
+  "zeroconf": [],
+  "mqtt": [],
+  "after_dependencies": ["http"]
 }

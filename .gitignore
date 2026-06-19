@@ -1,11 +1,14 @@
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
 dist/
 build/
 .DS_Store
 *.swp
 *.swo
+
+# Reverse engineering artifacts
 reverse_engineering/
 app.apk
 libapp.so
@@ -20,4 +23,19 @@ zulu-jdk.tar.gz
 zulu*/
 jadx.zip
 /tmp/
-captured_credentials.json
+
+# Capture / packet analysis (含敏感凭证)
+capture/
+captures/
+*.pcap
+*.pcapng
+
+# 抓包结果 - 含 token / 设备凭证 / 用户名密码
+*credentials*.json
+*_capture_*.log
+full_dump_*.json
+capture_*.log
+credentials.json
+
+# 临时抓包脚本（已用更新版 capture/ 目录）
+capture_3i.py

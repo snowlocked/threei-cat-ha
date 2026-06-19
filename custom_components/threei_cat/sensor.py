@@ -1,7 +1,9 @@
-"""Sensor platform for 3i Smart Device."""
+"""Sensor platform for 3i Smart Device (猫砂盆传感器平台)."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -15,361 +17,556 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CLEAN_RECORD_AREA,
+    CLEAN_RECORD_DURATION,
+    CLEAN_RECORD_FINISH_TIME,
+    CLEAN_RECORD_START_TIME,
+    CLEAN_RECORD_STATUS,
     CLEAN_STATUS,
-    CONSUMABLE_FILTER,
-    CONSUMABLE_LIFESPANS,
-    CONSUMABLE_MAIN_BRUSH,
-    CONSUMABLE_MOP,
     CONSUMABLE_NAMES,
-    CONSUMABLE_SIDE_BRUSH,
+    CONSUMABLE_NAMES_CN,
+    DEFAULT_CONSUMABLE_LIFESPANS,
+    DEODORIZE_LEVELS,
     DOMAIN,
+    EVENT_IDENTIFIER_WATER_MAKE,
+    MANUFACTURER,
+    PROP_BATTERY,
     WORK_MODES,
 )
-from .coordinator import ThreeiDataUpdateCoordinator
+from .coordinator import ThreeiDataUpdateCoordinator, ThreeiDeviceData
 
+_LOGGER = logging.getLogger(__name__)
+
+
+# ========================================================================
+# Setup
+# ========================================================================
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up 3i sensor entities."""
-    coordinator: ThreeiDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = [
-        ThreeiBatterySensor(coordinator),
-        ThreeiCleanStatusSensor(coordinator),
-        ThreeiWorkModeSensor(coordinator),
-        ThreeiFirmwareSensor(coordinator),
-        ThreeiMcuVersionSensor(coordinator),
-        ThreeiLastCleanAreaSensor(coordinator),
-        ThreeiLastCleanDurationSensor(coordinator),
-        ThreeiLastCleanTimeSensor(coordinator),
-        ThreeiLastCleanStatusSensor(coordinator),
-    ]
+    """设置 3i 传感器实体。
 
-    # Add consumable life sensors for the 4 main consumables
-    for consumable_key in [
-        CONSUMABLE_SIDE_BRUSH,
-        CONSUMABLE_MAIN_BRUSH,
-        CONSUMABLE_FILTER,
-        CONSUMABLE_MOP,
-    ]:
-        entities.append(ThreeiConsumableLifeSensor(coordinator, consumable_key))
+    根据 coordinator.devices 中实际发现的设备动态添加实体。
+    """
+    coordinator: ThreeiDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    entities: list[SensorEntity] = []
+
+    for device_id, dev_data in coordinator.devices.items():
+        # 基础状态传感器
+        entities.extend([
+            ThreeiBatterySensor(coordinator, device_id),
+            ThreeiWorkModeSensor(coordinator, device_id),
+            ThreeiCleanStatusSensor(coordinator, device_id),
+            ThreeiDeodorizeLevelSensor(coordinator, device_id),
+            ThreeiFirmwareSensor(coordinator, device_id),
+            ThreeiMcuVersionSensor(coordinator, device_id),
+            ThreeiCatWeightSensor(coordinator, device_id),
+            # 清洁记录相关
+            ThreeiLastCleanAreaSensor(coordinator, device_id),
+            ThreeiLastCleanDurationSensor(coordinator, device_id),
+            ThreeiLastCleanTimeSensor(coordinator, device_id),
+            ThreeiTotalCleanCountSensor(coordinator, device_id),
+            # 制水记录
+            ThreeiLastWaterMakeTimeSensor(coordinator, device_id),
+            ThreeiLastWaterMakeVolumeSensor(coordinator, device_id),
+        ])
+
+        # 耗材寿命传感器（动态）
+        for consumable in dev_data.consumables or []:
+            ctype = consumable.get("consumableType") or consumable.get("type")
+            if ctype:
+                entities.append(
+                    ThreeiConsumableLifeSensor(coordinator, device_id, ctype)
+                )
 
     async_add_entities(entities)
 
 
+# ========================================================================
+# 基础类
+# ========================================================================
+
 class ThreeiBaseSensor(CoordinatorEntity, SensorEntity):
-    """Base class for 3i sensors."""
+    """3i 传感器基类。"""
 
     _attr_has_entity_name = True
+    coordinator: ThreeiDataUpdateCoordinator
 
     def __init__(
         self,
         coordinator: ThreeiDataUpdateCoordinator,
+        device_id: str,
         key: str,
         name: str,
     ) -> None:
-        """Initialize the sensor."""
+        """初始化。"""
         super().__init__(coordinator)
+        self._device_id = str(device_id)
         self._key = key
         self._attr_name = name
-        self._attr_unique_id = f"{coordinator.device_id}_{key}"
-        self._attr_device_info = coordinator.device_info
+        self._attr_unique_id = f"{self._device_id}_{key}"
+        self._attr_device_info = self._build_device_info()
+
+    def _build_device_info(self) -> dict[str, Any]:
+        """构建 device_info。"""
+        dev = self.coordinator.get_device(self._device_id)
+        if dev:
+            return {
+                "identifiers": {(DOMAIN, self._device_id)},
+                "name": dev.name,
+                "manufacturer": MANUFACTURER,
+                "model": dev.product_mode_code or "3i Device",
+                "sw_version": dev.firmware_version,
+                "hw_version": dev.mcu_version,
+                "serial_number": dev.sn,
+            }
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": "3i Device",
+            "manufacturer": MANUFACTURER,
+            "model": "3i Device",
+        }
+
+    def _get_device(self) -> ThreeiDeviceData | None:
+        return self.coordinator.get_device(self._device_id)
 
     @property
-    def native_value(self) -> str | int | float | None:
-        """Return the state of the sensor."""
-        return self.coordinator.device_state.get(self._key)
+    def available(self) -> bool:
+        dev = self._get_device()
+        return dev is not None and dev.is_available
 
+
+# ========================================================================
+# 电池
+# ========================================================================
 
 class ThreeiBatterySensor(ThreeiBaseSensor):
-    """Battery level sensor."""
+    """电池电量传感器。"""
 
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator, "battery", "Battery")
-
-
-class ThreeiCleanStatusSensor(ThreeiBaseSensor):
-    """Clean status sensor."""
-
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator, "clean_status", "Clean Status")
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "battery", "Battery")
 
     @property
-    def native_value(self) -> str | None:
-        """Return clean status as text."""
-        val = self.coordinator.device_state.get(self._key)
-        if val is not None:
-            return CLEAN_STATUS.get(val, f"Unknown ({val})")
-        return None
+    def native_value(self) -> int | None:
+        dev = self._get_device()
+        return dev.battery if dev else None
 
+
+# ========================================================================
+# 工作模式
+# ========================================================================
 
 class ThreeiWorkModeSensor(ThreeiBaseSensor):
-    """Work mode sensor."""
+    """工作模式传感器。"""
 
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator, "work_mode", "Work Mode")
+    _attr_icon = "mdi:robot-vacuum"
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "work_mode", "Work Mode")
 
     @property
     def native_value(self) -> str | None:
-        """Return work mode as text."""
-        val = self.coordinator.device_state.get(self._key)
-        if val is not None:
-            return WORK_MODES.get(val, f"Unknown ({val})")
+        dev = self._get_device()
+        if dev and dev.work_mode is not None:
+            return WORK_MODES.get(dev.work_mode, f"Unknown ({dev.work_mode})")
         return None
 
 
+# ========================================================================
+# 清洁状态
+# ========================================================================
+
+class ThreeiCleanStatusSensor(ThreeiBaseSensor):
+    """清洁状态传感器。"""
+
+    _attr_icon = "mdi:broom"
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "clean_status", "Clean Status")
+
+    @property
+    def native_value(self) -> str | None:
+        dev = self._get_device()
+        if dev and dev.clean_status is not None:
+            return CLEAN_STATUS.get(dev.clean_status, f"Unknown ({dev.clean_status})")
+        return None
+
+
+# ========================================================================
+# 除臭档位
+# ========================================================================
+
+class ThreeiDeodorizeLevelSensor(ThreeiBaseSensor):
+    """除臭档位传感器。"""
+
+    _attr_icon = "mdi:spray"
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "deodorize_level", "Deodorize Level")
+
+    @property
+    def native_value(self) -> str | None:
+        dev = self._get_device()
+        if dev and dev.deodorize_level is not None:
+            return DEODORIZE_LEVELS.get(dev.deodorize_level, f"Unknown ({dev.deodorize_level})")
+        return None
+
+
+# ========================================================================
+# 固件 / MCU 版本
+# ========================================================================
+
 class ThreeiFirmwareSensor(ThreeiBaseSensor):
-    """Firmware version sensor."""
+    """固件版本传感器。"""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:chip"
 
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator, "firmwareCode", "Firmware Version")
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "firmware", "Firmware Version")
+
+    @property
+    def native_value(self) -> str | None:
+        dev = self._get_device()
+        return dev.firmware_version if dev else None
 
 
 class ThreeiMcuVersionSensor(ThreeiBaseSensor):
-    """MCU version sensor."""
+    """MCU 版本传感器。"""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:cpu-64-bit"
 
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator, "mcu_version_code", "MCU Version")
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "mcu_version", "MCU Version")
+
+    @property
+    def native_value(self) -> str | None:
+        dev = self._get_device()
+        return dev.mcu_version if dev else None
 
 
-class ThreeiConsumableLifeSensor(CoordinatorEntity, SensorEntity):
-    """Sensor showing consumable remaining life as a percentage."""
+# ========================================================================
+# 猫体重
+# ========================================================================
 
-    _attr_has_entity_name = True
+class ThreeiCatWeightSensor(ThreeiBaseSensor):
+    """猫体重传感器（克）。"""
+
+    _attr_icon = "mdi:cat"
+    _attr_native_unit_of_measurement = "g"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "cat_weight", "Cat Weight")
+
+    @property
+    def native_value(self) -> float | None:
+        dev = self._get_device()
+        if dev and dev.cat_weight is not None:
+            try:
+                return round(float(dev.cat_weight), 1)
+            except (ValueError, TypeError):
+                return None
+        return None
+
+
+# ========================================================================
+# 清洁记录传感器
+# ========================================================================
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    """解析时间戳字段（支持 ms/int/ISO string）。"""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            ts = float(value)
+            if ts > 1e12:  # 毫秒
+                ts = ts / 1000
+            return datetime.fromtimestamp(ts)
+        if isinstance(value, str):
+            s = value.replace("Z", "+00:00")
+            # 纯数字字符串
+            if s.isdigit():
+                ts = int(s)
+                if ts > 1e12:
+                    ts = ts / 1000
+                return datetime.fromtimestamp(ts)
+            return datetime.fromisoformat(s)
+    except (ValueError, TypeError, OSError):
+        pass
+    return None
+
+
+def _get_last_clean_record(dev: ThreeiDeviceData) -> dict[str, Any] | None:
+    """获取最后一次清洁记录。"""
+    if not dev.clean_records:
+        return None
+    first = dev.clean_records[0]
+    return first if isinstance(first, dict) else None
+
+
+class ThreeiLastCleanAreaSensor(ThreeiBaseSensor):
+    """最后清洁面积（m²）。"""
+
+    _attr_icon = "mdi:floor-plan"
+    _attr_native_unit_of_measurement = "m²"
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "last_clean_area", "Last Clean Area")
+
+    @property
+    def native_value(self) -> float | None:
+        dev = self._get_device()
+        if not dev:
+            return None
+        rec = _get_last_clean_record(dev)
+        if rec:
+            area = rec.get(CLEAN_RECORD_AREA) or rec.get("area")
+            if area is not None:
+                try:
+                    return round(float(area), 2)
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+
+class ThreeiLastCleanDurationSensor(ThreeiBaseSensor):
+    """最后清洁时长（秒）。"""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = "s"
+    _attr_icon = "mdi:timer-outline"
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "last_clean_duration", "Last Clean Duration")
+
+    @property
+    def native_value(self) -> int | None:
+        dev = self._get_device()
+        if not dev:
+            return None
+        rec = _get_last_clean_record(dev)
+        if rec:
+            duration = rec.get(CLEAN_RECORD_DURATION) or rec.get("duration")
+            if duration is not None:
+                try:
+                    return int(duration)
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+
+class ThreeiLastCleanTimeSensor(ThreeiBaseSensor):
+    """最后清洁时间。"""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:clock-check-outline"
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "last_clean_time", "Last Clean Time")
+
+    @property
+    def native_value(self) -> datetime | None:
+        dev = self._get_device()
+        if not dev:
+            return None
+        rec = _get_last_clean_record(dev)
+        if rec:
+            for k in (CLEAN_RECORD_FINISH_TIME, CLEAN_RECORD_START_TIME, "finishTime", "startTime", "cleanFinish"):
+                ts = rec.get(k)
+                if ts is not None:
+                    parsed = _parse_timestamp(ts)
+                    if parsed:
+                        return parsed
+        return None
+
+
+class ThreeiTotalCleanCountSensor(ThreeiBaseSensor):
+    """总清洁次数。"""
+
+    _attr_icon = "mdi:counter"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "total_clean_count", "Total Clean Count")
+
+    @property
+    def native_value(self) -> int:
+        dev = self._get_device()
+        if not dev or not dev.clean_records:
+            return 0
+        return len(dev.clean_records)
+
+
+# ========================================================================
+# 制水记录传感器
+# ========================================================================
+
+def _get_last_water_record(dev: ThreeiDeviceData) -> dict[str, Any] | None:
+    """获取最后一次制水记录。"""
+    if not dev.water_records:
+        return None
+    first = dev.water_records[0]
+    return first if isinstance(first, dict) else None
+
+
+class ThreeiLastWaterMakeTimeSensor(ThreeiBaseSensor):
+    """最后制水时间。"""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:water-clock"
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "last_water_make_time", "Last Water Make Time")
+
+    @property
+    def native_value(self) -> datetime | None:
+        dev = self._get_device()
+        if not dev:
+            return None
+        rec = _get_last_water_record(dev)
+        if rec:
+            for k in ("time", "createTime", "finishTime", "endTime"):
+                ts = rec.get(k)
+                if ts is not None:
+                    parsed = _parse_timestamp(ts)
+                    if parsed:
+                        return parsed
+        return None
+
+
+class ThreeiLastWaterMakeVolumeSensor(ThreeiBaseSensor):
+    """最后制水量 (ml)。"""
+
+    _attr_icon = "mdi:water"
+    _attr_native_unit_of_measurement = "ml"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: ThreeiDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator, device_id, "last_water_make_volume", "Last Water Make Volume")
+
+    @property
+    def native_value(self) -> float | None:
+        dev = self._get_device()
+        if not dev:
+            return None
+        rec = _get_last_water_record(dev)
+        if rec:
+            for k in ("volume", "waterVolume", "amount", "value"):
+                v = rec.get(k)
+                if v is not None:
+                    try:
+                        return round(float(v), 1)
+                    except (ValueError, TypeError):
+                        pass
+        return None
+
+
+# ========================================================================
+# 耗材寿命传感器
+# ========================================================================
+
+class ThreeiConsumableLifeSensor(ThreeiBaseSensor):
+    """耗材剩余寿命（百分比）。"""
+
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_device_class = None
     _attr_icon = "mdi:clock-outline"
 
     def __init__(
         self,
         coordinator: ThreeiDataUpdateCoordinator,
-        consumable_key: str,
+        device_id: str,
+        consumable_type: str,
     ) -> None:
-        """Initialize the consumable life sensor."""
-        super().__init__(coordinator)
-        self._consumable_key = consumable_key
-        self._attr_name = f"{CONSUMABLE_NAMES.get(consumable_key, consumable_key)} Life"
-        self._attr_unique_id = f"{coordinator.device_id}_consumable_{consumable_key}"
-        self._attr_device_info = coordinator.device_info
+        """初始化。"""
+        self._consumable_type = consumable_type
+        name = CONSUMABLE_NAMES.get(consumable_type, consumable_type)
+        super().__init__(
+            coordinator,
+            device_id,
+            f"consumable_{consumable_type}",
+            f"{name} Life",
+        )
 
     @property
     def native_value(self) -> int | None:
-        """Return the remaining life percentage of the consumable."""
-        consumables = self.coordinator.consumables_data
-        if not consumables:
+        dev = self._get_device()
+        if not dev or not dev.consumables:
             return None
 
-        # Try to find the consumable data by key
-        # The API may return data in various formats; try common patterns
         item = None
-        if isinstance(consumables, dict):
-            # Direct key lookup
-            item = consumables.get(self._consumable_key)
-            # Or nested in a list
-            if item is None and "list" in consumables:
-                for entry in consumables["list"]:
-                    if isinstance(entry, dict):
-                        if entry.get("consumableType") == self._consumable_key:
-                            item = entry
-                            break
-                        if entry.get("type") == self._consumable_key:
-                            item = entry
-                            break
-        elif isinstance(consumables, list):
-            for entry in consumables:
-                if isinstance(entry, dict):
-                    if entry.get("consumableType") == self._consumable_key:
-                        item = entry
-                        break
-                    if entry.get("type") == self._consumable_key:
-                        item = entry
-                        break
+        for entry in dev.consumables:
+            if not isinstance(entry, dict):
+                continue
+            ctype = entry.get("consumableType") or entry.get("type")
+            if ctype == self._consumable_type:
+                item = entry
+                break
 
         if item is None:
             return None
 
-        # Try to extract percentage directly
-        if isinstance(item, (int, float)):
-            return int(item)
-
-        if isinstance(item, dict):
-            # Direct percentage field
-            for pct_key in ("life", "lifePercent", "percent", "remaining", "percentage"):
-                if pct_key in item:
+        # 优先用百分比字段
+        for pct_key in ("life", "lifePercent", "percent", "remaining", "percentage"):
+            if pct_key in item:
+                try:
                     return int(item[pct_key])
-
-            # Calculate from used/total hours
-            used_hours = item.get("usedHours") or item.get("usedTime") or item.get("useTime")
-            total_hours = item.get("totalHours") or item.get("totalTime") or item.get("lifeTime")
-            if used_hours is not None and total_hours is not None:
-                try:
-                    remaining = max(0, (1 - float(used_hours) / float(total_hours)) * 100)
-                    return int(remaining)
-                except (ValueError, ZeroDivisionError):
+                except (ValueError, TypeError):
                     pass
 
-            # Fallback: use defaults
-            lifespan = CONSUMABLE_LIFESPANS.get(self._consumable_key)
-            if lifespan and "usedHours" in item:
-                try:
-                    remaining = max(0, (1 - float(item["usedHours"]) / lifespan) * 100)
-                    return int(remaining)
-                except (ValueError, ZeroDivisionError):
-                    pass
-
-        return None
-
-
-class ThreeiLastCleanAreaSensor(CoordinatorEntity, SensorEntity):
-    """Sensor showing the last clean area in square meters."""
-
-    _attr_has_entity_name = True
-    _attr_native_unit_of_measurement = "m\u00b2"
-    _attr_icon = "mdi:floor-plan"
-
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator)
-        self._attr_name = "Last Clean Area"
-        self._attr_unique_id = f"{coordinator.device_id}_last_clean_area"
-        self._attr_device_info = coordinator.device_info
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the last clean area."""
-        records = self.coordinator.clean_records
-        if not records:
-            return None
-        last = records[0] if isinstance(records, list) and records else None
-        if not last or not isinstance(last, dict):
-            return None
-        area = last.get("area")
-        if area is not None:
+        # 用 used/total 计算
+        used = item.get("usedHours") or item.get("usedTime") or item.get("useTime")
+        total = item.get("totalHours") or item.get("totalTime") or item.get("lifeTime")
+        if used is not None and total is not None:
             try:
-                return float(area)
-            except (ValueError, TypeError):
+                pct = max(0.0, min(100.0, (1 - float(used) / float(total)) * 100))
+                return int(pct)
+            except (ValueError, TypeError, ZeroDivisionError):
                 pass
-        return None
 
-
-class ThreeiLastCleanDurationSensor(CoordinatorEntity, SensorEntity):
-    """Sensor showing the last clean duration in minutes."""
-
-    _attr_has_entity_name = True
-    _attr_native_unit_of_measurement = "min"
-    _attr_device_class = SensorDeviceClass.DURATION
-    _attr_icon = "mdi:timer-outline"
-
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator)
-        self._attr_name = "Last Clean Duration"
-        self._attr_unique_id = f"{coordinator.device_id}_last_clean_duration"
-        self._attr_device_info = coordinator.device_info
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the last clean duration in minutes."""
-        records = self.coordinator.clean_records
-        if not records:
-            return None
-        last = records[0] if isinstance(records, list) and records else None
-        if not last or not isinstance(last, dict):
-            return None
-        duration = last.get("duration")
-        if duration is not None:
+        # 兜底：用默认寿命
+        lifespan = DEFAULT_CONSUMABLE_LIFESPANS.get(self._consumable_type)
+        if lifespan and "usedHours" in item:
             try:
-                # Duration may be in seconds; convert to minutes
-                val = int(duration)
-                if val > 300:  # likely seconds
-                    return val // 60
-                return val  # already minutes
-            except (ValueError, TypeError):
+                pct = max(0.0, min(100.0, (1 - float(item["usedHours"]) / lifespan) * 100))
+                return int(pct)
+            except (ValueError, TypeError, ZeroDivisionError):
                 pass
+
         return None
 
-
-class ThreeiLastCleanTimeSensor(CoordinatorEntity, SensorEntity):
-    """Sensor showing when the last clean occurred."""
-
-    _attr_has_entity_name = True
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
-    _attr_icon = "mdi:clock-check-outline"
-
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator)
-        self._attr_name = "Last Clean Time"
-        self._attr_unique_id = f"{coordinator.device_id}_last_clean_time"
-        self._attr_device_info = coordinator.device_info
-
     @property
-    def native_value(self) -> datetime | None:
-        """Return the timestamp of the last clean."""
-        records = self.coordinator.clean_records
-        if not records:
-            return None
-        last = records[0] if isinstance(records, list) and records else None
-        if not last or not isinstance(last, dict):
-            return None
-        # Try common timestamp fields
-        for ts_key in ("cleanFinish", "finishTime", "endTime", "createTime", "timestamp"):
-            ts = last.get(ts_key)
-            if ts is not None:
-                try:
-                    if isinstance(ts, (int, float)):
-                        if ts > 1e12:  # milliseconds
-                            ts = ts / 1000
-                        return datetime.fromtimestamp(ts)
-                    if isinstance(ts, str):
-                        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                except (ValueError, TypeError, OSError):
-                    continue
-        return None
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """额外属性。"""
+        dev = self._get_device()
+        if not dev or not dev.consumables:
+            return {}
 
+        item = None
+        for e in dev.consumables:
+            if isinstance(e, dict):
+                ctype = e.get("consumableType") or e.get("type")
+                if ctype == self._consumable_type:
+                    item = e
+                    break
 
-class ThreeiLastCleanStatusSensor(CoordinatorEntity, SensorEntity):
-    """Sensor showing the last clean result status."""
+        if not item:
+            return {}
 
-    _attr_has_entity_name = True
-    _attr_icon = "mdi:check-circle-outline"
-
-    def __init__(self, coordinator: ThreeiDataUpdateCoordinator) -> None:
-        """Initialize."""
-        super().__init__(coordinator)
-        self._attr_name = "Last Clean Result"
-        self._attr_unique_id = f"{coordinator.device_id}_last_clean_result"
-        self._attr_device_info = coordinator.device_info
-
-    @property
-    def native_value(self) -> str | None:
-        """Return the last clean result."""
-        records = self.coordinator.clean_records
-        if not records:
-            return None
-        last = records[0] if isinstance(records, list) and records else None
-        if not last or not isinstance(last, dict):
-            return None
-        if last.get("errorFinish"):
-            return "Error"
-        if last.get("manualFinish"):
-            return "Manually Stopped"
-        if last.get("cleanFinish") or last.get("taskCompletion"):
-            return "Completed"
-        return last.get("status", "Unknown")
+        return {
+            "consumable_type": self._consumable_type,
+            "name_cn": CONSUMABLE_NAMES_CN.get(self._consumable_type, ""),
+            "raw": {k: v for k, v in item.items()
+                    if not isinstance(v, (dict, list))},
+        }

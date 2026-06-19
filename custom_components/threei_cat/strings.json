@@ -2,45 +2,141 @@
   "config": {
     "step": {
       "user": {
-        "title": "Choose Login Method",
+        "title": "3i 设备 - 选择登录方式",
+        "description": "请选择登录 3i App 的方式。",
         "data": {
-          "method": "Login Method"
+          "method": "登录方式"
         }
       },
-      "login": {
-        "title": "Enter Phone Number",
-        "description": "Enter your phone number registered with the 3i app.",
+      "password": {
+        "title": "3i 设备 - 登录",
+        "description": "输入你在 3i App 中使用的用户名（邮箱或手机号）和密码。",
         "data": {
-          "phone": "Phone Number",
-          "phone_region": "Region Code (e.g. 86 for China)"
+          "username": "用户名 / 邮箱",
+          "password": "密码",
+          "region_code": "国家代码（默认 86）"
         }
       },
-      "code": {
-        "title": "Enter Verification Code",
-        "description": "Enter the 6-digit verification code sent to your phone.",
+      "devices": {
+        "title": "3i 设备 - 选择设备",
+        "description": "发现 {count} 个 3i 设备（用户 {username}）。请选择要添加到 Home Assistant 的设备。",
         "data": {
-          "verify_code": "Verification Code"
+          "devices": "选择设备"
         }
       },
       "manual": {
-        "title": "Manual Token Entry",
-        "description": "Enter tokens captured via mitmproxy or Frida.",
+        "title": "3i 设备 - 手动输入令牌",
+        "description": "高级选项：从抓包中获取并填入令牌信息。",
         "data": {
-          "iot_token": "IoT Token",
+          "username": "用户名",
+          "user_id": "用户 ID",
+          "open_id": "Open ID",
+          "sid": "SID (session ID)",
           "refresh_token": "Refresh Token",
-          "identity_id": "Identity ID",
-          "jwt_token": "JWT Token (OpenAccount)",
+          "authorization": "Authorization",
+          "client_token": "Client Token (可选)",
           "tenant_id": "Tenant ID",
-          "mqtt_endpoint": "MQTT Endpoint",
-          "mqtt_port": "MQTT Port"
+          "app_id": "App ID",
+          "app_key": "App Key",
+          "cdn_url": "CDN URL"
+        }
+      },
+      "reauth_confirm": {
+        "title": "3i 设备 - 重新认证",
+        "description": "令牌已过期，请重新输入用户 {username} 的密码以刷新认证。",
+        "data": {
+          "password": "密码"
         }
       }
     },
     "error": {
-      "send_code_failed": "Failed to connect: {error}",
-      "login_failed": "Login failed: {error}",
-      "invalid_auth": "Invalid credentials.",
-      "unknown": "Unexpected error: {error}"
+      "login_failed": "登录失败: {error}",
+      "no_devices": "未发现任何 3i 设备。",
+      "no_device_selected": "请至少选择一个设备。",
+      "missing_token": "必填令牌字段缺失。",
+      "reauth_successful": "重新认证成功。",
+      "cannot_connect": "无法连接到 3i 云服务。",
+      "invalid_auth": "无效的认证信息。"
+    },
+    "abort": {
+      "already_configured": "该用户已配置。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "3i 设备选项",
+        "data": {
+          "scan_interval": "扫描间隔（秒）",
+          "show_inactive_devices": "显示离线设备"
+        }
+      }
+    }
+  },
+  "services": {
+    "refresh_all": {
+      "name": "刷新所有 3i 设备",
+      "description": "立即刷新所有 3i 设备的数据。"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": { "name": "电量" },
+      "work_mode": { "name": "工作模式" },
+      "clean_status": { "name": "清洁状态" },
+      "deodorize_level": { "name": "除臭档位" },
+      "firmware": { "name": "固件版本" },
+      "mcu_version": { "name": "MCU 版本" },
+      "cat_weight": { "name": "猫体重" },
+      "last_clean_area": { "name": "上次清洁面积" },
+      "last_clean_duration": { "name": "上次清洁时长" },
+      "last_clean_time": { "name": "上次清洁时间" },
+      "total_clean_count": { "name": "总清洁次数" },
+      "last_water_make_time": { "name": "上次制水时间" },
+      "last_water_make_volume": { "name": "上次制水量" }
+    },
+    "binary_sensor": {
+      "online": { "name": "在线" },
+      "charging": { "name": "充电中" },
+      "bin_full": { "name": "集便箱满" },
+      "water_low": { "name": "水量不足" },
+      "error": { "name": "故障" }
+    },
+    "switch": {
+      "autoClean": { "name": "自动清洁" },
+      "childLock": { "name": "童锁" },
+      "deviceLight": { "name": "设备灯" },
+      "powerSaving": { "name": "节能模式" },
+      "deodorize": { "name": "除臭" }
+    },
+    "select": {
+      "work_mode": {
+        "name": "工作模式",
+        "options": {
+          "Manual": "手动",
+          "Auto": "自动",
+          "Smart": "智能",
+          "Recharge": "回充",
+          "Max": "强力"
+        }
+      },
+      "deodorize_level": {
+        "name": "除臭档位",
+        "options": {
+          "Off": "关闭",
+          "Low": "低",
+          "Medium": "中",
+          "High": "高",
+          "Auto": "自动"
+        }
+      }
+    },
+    "button": {
+      "start_clean": { "name": "开始清洁" },
+      "stop_clean": { "name": "停止清洁" },
+      "return_to_dock": { "name": "返回充电桩" },
+      "refresh": { "name": "刷新数据" },
+      "check_upgrade": { "name": "检查固件升级" }
     }
   }
 }
